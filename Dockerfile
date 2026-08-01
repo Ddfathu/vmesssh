@@ -1,9 +1,36 @@
-FROM ubuntu:22.04
+# =================================================================
+# STAGE 1: BUILDER (Logika Sukses Kompilasi BadVPN dari Contoh)
+# =================================================================
+FROM ubuntu:22.04 AS builder
 
-# Menghindari prompt interaktif saat build di Railway
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 1. Update & Pasang Paket Dasar Sistem, Dropbear, Stunnel, OpenSSL, Sudo, dan Node.js 20
+RUN apt-get update && apt-get install -y \
+    cmake \
+    make \
+    gcc \
+    g++ \
+    curl \
+    tar \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+# Download dan compile badvpn-udpgw langsung dari release resmi github
+RUN curl -fsSL https://github.com/ambrop72/badvpn/archive/refs/tags/1.999.130.tar.gz | tar -xz \
+    && cd badvpn-1.999.130 \
+    && mkdir build && cd build \
+    && cmake .. -DBUILD_NOTHING_BY_DEFAULT=1 -DBUILD_UDPGW=1 \
+    && make badvpn-udpgw
+
+# =================================================================
+# STAGE 2: RUNTIME (Pondasi Utama SC Asli Lu yang Sudah Konek)
+# =================================================================
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install Node.js, Dropbear, Stunnel, OpenSSL, dan tools pendukung asli
 RUN apt-get update && apt-get install -y \
     curl \
     dropbear \
@@ -12,32 +39,33 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     sudo \
     procps \
+    net-tools \
+    bash \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Unduh utilitas Cloudflared Resmi Sistem untuk Terowongan Zero Trust
+# Unduh utilitas Cloudflared Resmi untuk Terowongan Zero Trust
 RUN curl -fsSL -o /usr/local/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
     && chmod +x /usr/local/bin/cloudflared
 
-# 3. 🔥 FIX BADVPN: Unduh static binary badvpn-udpgw AMD64 yang asli dan terverifikasi
-RUN curl -L -o /usr/local/bin/badvpn-udpgw "https://github.com/ambrop72/badvpn/raw/master/badvpn-udpgw" || \
-    curl -L -o /usr/local/bin/badvpn-udpgw "https://github.com/PANEL-TUNNELING/badvpn-udpgw/raw/main/badvpn-udpgw" \
-    && chmod +x /usr/local/bin/badvpn-udpgw
+# 🔥 PENERAPAN LOGIKA: Salin binary udpgw yang SUKSES dari stage builder ke target sistem
+COPY --from=builder /src/badvpn-1.999.130/build/udpgw/badvpn-udpgw /usr/local/bin/badvpn-udpgw
+RUN chmod +x /usr/local/bin/badvpn-udpgw
 
-# 4. Atur Direktori Kerja Container
+# Atur Direktori Kerja Container
 WORKDIR /app
 
-# 5. Salin package.json dan Pasang Modul Dependensi NPM
+# Salin package.json dan Pasang Modul Dependensi NPM bawaan lu
 COPY package.json ./
 RUN npm install --omit=dev || npm install
 
-# 6. Salin Seluruh Berkas Script Proyek ke Container
+# Salin Seluruh Berkas Script Proyek (server.js, start.sh, dll) ke Container
 COPY . .
 
-# 7. Berikan Hak Izin Eksekusi Skrip start.sh
+# Berikan Hak Izin Eksekusi Skrip start.sh
 RUN chmod +x start.sh
 
-# 8. Trigger Utama Saat Container Aktif
+# Trigger Utama Saat Container Aktif
 CMD ["./start.sh"]
