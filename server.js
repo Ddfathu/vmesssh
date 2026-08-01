@@ -6,19 +6,20 @@ const axios = require("axios");
 const os = require('os');
 const fs = require("fs");
 const path = require("path");
+const crypto = require('crypto');
 const { promisify } = require('util');
 const exec = promisify(require('child_process').exec);
 const { execSync } = require('child_process');
 
 // ========================================================
-// VARIABEL KONFIGURASI GLOBAL (RAILWAY & DUAL-TUNNEL)
+// VARIABEL KONFIGURASI GLOBAL (RAILWAY FRIENDLY)
 // ========================================================
 const UPLOAD_URL = process.env.UPLOAD_URL || '';      
 const PROJECT_URL = process.env.PROJECT_URL || '';    
 const AUTO_ACCESS = process.env.AUTO_ACCESS || false; 
 const FILE_PATH = process.env.FILE_PATH || '.tmp';   
 const SUB_PATH = process.env.SUB_PATH || 'sub';       
-const PORT = process.env.PORT || 8080; // 🎯 Port Utama Railway untuk Web UI
+const PORT = process.env.PORT || 8080; // 🎯 Garda Terdepan (Port Utama Railway)
 const UUID = process.env.UUID || '1f37ac4f-fdd0-49df-9406-1eda70a1d512'; 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
 
@@ -26,18 +27,20 @@ const NEZHA_SERVER = process.env.NEZHA_SERVER || '';
 const NEZHA_PORT = process.env.NEZHA_PORT || '';            
 const NEZHA_KEY = process.env.NEZHA_KEY || '';              
 
-// Variabel untuk Quick Tunnel Vmess/Vless/Trojan
-const ARGO_DOMAIN = '';          
-const ARGO_AUTH = '';              
-const ARGO_PORT = 8001; // 🎯 Xray Core diarahkan ke Port internal 8001
+const ARGO_DOMAIN = process.env.ARGO_DOMAIN || '';          
+const ARGO_AUTH = process.env.ARGO_AUTH || '';              
+const ARGO_PORT = process.env.ARGO_PORT || 8001;            
 
 const CFIP = process.env.CFIP || '104.18.17.214';            
 const CFPORT = process.env.CFPORT || 443;                   
 const NAME = process.env.NAME || 'ddfathu';                        
 
+const LOG_PATH = "/tmp/cloudflared.log";
+const NAMED_LOG_PATH = "/tmp/named_tunnel.log";
 const STATS_PATH = "/tmp/server_stats.json";
 const DB_PATH = "/tmp/ssh_details.json";
 
+// Membuat folder operasi jika belum ada
 if (!fs.existsSync(FILE_PATH)) {
   fs.mkdirSync(FILE_PATH);
 }
@@ -51,8 +54,8 @@ function generateRandomName() {
   return result;
 }
 
+// Konstanta Jalur Proses
 let subContent = null;
-let currentActiveDomain = '';
 const npmName = generateRandomName();
 const webName = generateRandomName();
 const botName = generateRandomName();
@@ -63,9 +66,10 @@ let webPath = path.join(FILE_PATH, webName);
 let botPath = path.join(FILE_PATH, botName);
 let subPath = path.join(FILE_PATH, 'sub.txt');
 let listPath = path.join(FILE_PATH, 'list.txt');
+let bootLogPath = path.join(FILE_PATH, 'boot.log');
 let configPath = path.join(FILE_PATH, 'config.json');
 
-// --- DATABASE UTILITIES FOR SSH USERS ---
+// --- DATABASE & HELPER MANAGEMENT PANEL SSH ---
 function loadDb() {
     if (fs.existsSync(DB_PATH)) {
         try { return JSON.parse(fs.readFileSync(DB_PATH, 'utf8')); } catch (e) { return {}; }
@@ -76,26 +80,29 @@ function saveDb(data) {
     try { fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2)); } catch (e) {}
 }
 
+let currentActiveDomain = '';
+
 function getCurrentHosts() {
     let hwInfo = {};
     if (fs.existsSync(STATS_PATH)) {
         try { hwInfo = JSON.parse(fs.readFileSync(STATS_PATH, 'utf8')); } catch (e) {}
     }
-    const zeroTrustDomain = process.env.ARGO_DOMAIN || "";
-    let hostOutput = "";
+    const namedUrl = process.env.D || "";
+    let quickUrl = currentActiveDomain || "Menunggu Quick Tunnel...";
     
-    if (zeroTrustDomain) {
-        hostOutput += `${zeroTrustDomain.replace(/https?:\/\//, '')} (Gunakan domain pribadi untuk SSH WS)`;
-    }
+    let hostOutput = "";
+    if (namedUrl) hostOutput += `${namedUrl.replace(/https?:\/\//, '')} (SSH WS)`;
     
     if (hwInfo.railway_proxy && hwInfo.railway_proxy.trim() !== "") {
         hostOutput += hostOutput ? ` dan ${hwInfo.railway_proxy} (SSH SNI Murni)` : `${hwInfo.railway_proxy} (SSH SNI Murni)`;
     } else if (process.env.RAILWAY_TCP_PROXY_DOMAIN && process.env.RAILWAY_TCP_PROXY_PORT) {
         const autoTcp = `${process.env.RAILWAY_TCP_PROXY_DOMAIN}:${process.env.RAILWAY_TCP_PROXY_PORT}`;
         hostOutput += hostOutput ? ` dan ${autoTcp} (SSH SNI Murni)` : `${autoTcp} (SSH SNI Murni)`;
+    } else if (process.env.SNI) {
+        hostOutput += ` dan ${process.env.SNI.replace(/https?:\/\//, '')} (SSH SNI Murni)`;
     }
     
-    if (!hostOutput) hostOutput = currentActiveDomain || "Menunggu Tunnel Siap...";
+    if (!hostOutput) hostOutput = quickUrl.replace(/https?:\/\//, '');
     return hostOutput;
 }
 
@@ -171,7 +178,8 @@ function deleteSsh(username) {
     }
 }
 
-// --- CORE LOGIC BACKEND TUNNEL XRAY ---
+// --- LOGIKA BACKEND VMESS/ARGO CORE (DI-RECYCLE DARI SCRIPT AWAL LU) ---
+function deleteNodes() { /* Kosong / Dipertahankan sesuai script awal lu */ }
 function cleanupOldFiles() { try { const files = fs.readdirSync(FILE_PATH); files.forEach(file => { try { fs.unlinkSync(path.join(FILE_PATH, file)); } catch(e){} }); } catch(e){} }
 function readPathsFromFile(filename, defaultPath) { try { if (fs.existsSync(filename)) { const content = fs.readFileSync(filename, 'utf-8'); const paths = content.split('\n').map(p => p.trim()).filter(p => p.startsWith('/')); if (paths.length > 0) return paths; } } catch (e) {} return [defaultPath]; }
 
@@ -217,20 +225,24 @@ async function downloadFilesAndRun() {
 
   exec(`nohup ${webPath} -c ${FILE_PATH}/config.json >/dev/null 2>&1 &`);
   
-  // Quick Tunnel Engine khusus port 8001 (Vmess Core)
   let args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile ${FILE_PATH}/boot.log --loglevel info --url http://localhost:${ARGO_PORT}`;
+  if (ARGO_AUTH.match(/^[A-Z0-9a-z=]{120,250}$/)) args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 run --token ${ARGO_AUTH}`;
+  
   exec(`nohup ${botPath} ${args} >/dev/null 2>&1 &`);
   await new Promise(r => setTimeout(r, 5000));
 }
 
 async function extractDomains() {
-  try {
-    if(fs.existsSync(path.join(FILE_PATH, 'boot.log'))) {
-      const logContent = fs.readFileSync(path.join(FILE_PATH, 'boot.log'), 'utf-8');
-      const match = logContent.match(/https?:\/\/([^ ]*trycloudflare\.com)\/?/);
-      if (match) { currentActiveDomain = match[1]; await generateLinks(currentActiveDomain); }
-    }
-  } catch (e) {}
+  if (ARGO_AUTH && ARGO_DOMAIN) { currentActiveDomain = ARGO_DOMAIN; await generateLinks(ARGO_DOMAIN); }
+  else {
+    try {
+      if(fs.existsSync(path.join(FILE_PATH, 'boot.log'))) {
+        const logContent = fs.readFileSync(path.join(FILE_PATH, 'boot.log'), 'utf-8');
+        const match = logContent.match(/https?:\/\/([^ ]*trycloudflare\.com)\/?/);
+        if (match) { currentActiveDomain = match[1]; await generateLinks(currentActiveDomain); }
+      }
+    } catch (e) {}
+  }
 }
 
 async function getMetaInfo() { try { const res = await axios.get('https://api.ip.sb/geoip'); return `${res.data.country_code}-${res.data.isp}`.replace(/\s+/g, '_'); } catch(e) { return 'RailwayServer'; } }
@@ -245,7 +257,7 @@ async function generateLinks(argoDomain) {
   fs.writeFileSync(subPath, subContent);
 }
 
-// --- HTTP ROUTER SERVICE (PORT 8080) ---
+// --- CORE PONDASI GATEWAY HTTP (PORT 8080 UTAMA) ---
 const server = http.createServer(async (req, res) => {
     const parsedUrl = url.parse(req.url, true);
     const pathName = parsedUrl.pathname;
@@ -255,17 +267,19 @@ const server = http.createServer(async (req, res) => {
     
     res.setHeader('Access-Control-Allow-Origin', '*');
 
+    // 1. Jalur Link Sub Vmess Bawaan Awal Lu
     if (pathName === `/${SUB_PATH}`) {
         res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
         return res.end(subContent || (fs.existsSync(subPath) ? fs.readFileSync(subPath, 'utf-8') : 'Loading sub...'));
     }
 
+    // 2. Info Internal
     if (pathName === '/__info') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ uuid: UUID, domain: currentActiveDomain, paths: { vless: '/vless-argo', vmess: '/vmess-argo', trojan: '/trojan-argo' } }));
+        return res.end(JSON.stringify({ uuid: UUID, domain: currentActiveDomain || ARGO_DOMAIN, paths: { vless: '/vless-argo', vmess: '/vmess-argo', trojan: '/trojan-argo' } }));
     }
 
-    // API Panel SSH Management
+    // 3. API Panel SSH Management Temen Lu
     if (pathName === '/api/logtunnel') {
         res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
         return res.end(fs.existsSync(path.join(FILE_PATH, 'boot.log')) ? fs.readFileSync(path.join(FILE_PATH, 'boot.log'), 'utf8') : "Log belum siap.");
@@ -281,14 +295,14 @@ const server = http.createServer(async (req, res) => {
         if (fs.existsSync(STATS_PATH)) { try { hwInfo = { ...hwInfo, ...JSON.parse(fs.readFileSync(STATS_PATH, 'utf8')) }; } catch (e) {} }
         
         let quickUrl = currentActiveDomain || "Menunggu Quick Tunnel...";
-        let namedUrl = process.env.ARGO_DOMAIN || "Tidak Aktif";
+        let namedUrl = process.env.D || "Tidak Aktif";
         let rlwyUrl = process.env.SNI || "Tidak Aktif";
         
         let cleanOnlineStr = String(hwInfo.ssh_online).replace(/👥/g, '').replace(/Active/g, '').replace(/Users/g, '').trim();
         return res.end(JSON.stringify({ quick_url: quickUrl, named_url: namedUrl, railway_url: rlwyUrl, status: "ONLINE", ...hwInfo, ssh_online: cleanOnlineStr || "0" }));
     }
 
-    // HTML Rendering UI Panel Bawaan 100%
+    // 4. Render UI HTML Utama (PORT 8080 SEJATI)
     if (pathName === '/' || pathName === '/index.html') {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         return res.end(`
@@ -365,10 +379,10 @@ const server = http.createServer(async (req, res) => {
                         <tbody id="ssh-table-body"><tr><td colspan="3" style="text-align:center; color:#64748b;">Loading accounts...</td></tr></tbody>
                     </table>
                 </div>
-                <div class="url-section" style="border-color: #a855f7;"><div class="url-title" style="color: #d8b4fe;">Server ssh aktif (zero trust domain)</div><div class="url-box" id="named-url">Loading...</div><button class="btn-copy" id="btn-copy-named" style="background:#a855f7; color:#fff;" onclick="copyTxt('named-url', 'btn-copy-named')">📋 COPY SSH SERVER</button></div>
+                <div class="url-section" style="border-color: #a855f7;"><div class="url-title" style="color: #d8b4fe;">Server ssh aktif</div><div class="url-box" id="named-url">Loading...</div><button class="btn-copy" id="btn-copy-named" style="background:#a855f7; color:#fff;" onclick="copyTxt('named-url', 'btn-copy-named')">📋 COPY SSH SERVER</button></div>
                 <div class="url-section" style="border-color: #f43f5e;"><div class="url-title" style="color: #fb7185;">Server SNI/Stunnel SNI MURNI</div><div class="url-box" id="railway-url" style="color: #f43f5e;">Loading...</div><button class="btn-copy" id="btn-copy-railway" style="background:#f43f5e; color:#fff;" onclick="copyTxt('railway-url', 'btn-copy-railway')">📋 COPY SERVER SSH SNI</button></div>
                 <div class="url-section"><div class="url-title">Quick Tunnel url (Vmess/Vless/Trojan Sub)</div><div class="url-box" id="quick-url">Loading...</div><button class="btn-copy" id="btn-copy-quick" onclick="copyTxt('quick-url', 'btn-copy-quick')">📋 COPY SUB DOMAIN</button></div>
-                <p class="note">Dual terowongan berjalan sinkron terpisah.<br>Node.js Core Engine Rendering System.</p>
+                <p class="note">Tiga rute tunnel berjalan sinkron tanpa bentrok.<br>Node.js Core Engine Rendering System.</p>
             </div>
             <script>
                 let adminToken = localStorage.getItem("admin_session_token") || "";
@@ -449,7 +463,27 @@ const server = http.createServer(async (req, res) => {
     res.end("Not Found");
 });
 
+// 🔥 PROXY UPGRADE: Tangkap Payload WebSocket SSH, Oper langsung ke ws-proxy.js (Port 8880)
+server.on('upgrade', (req, socket, head) => {
+  const urlPath = req.url.split('?')[0];
+  if (urlPath === '/ssh-ws') {
+    const targetConn = require('net').createConnection({ port: 8880, host: '127.0.0.1' }, () => {
+      let rawHeaders = `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n`;
+      for (let i = 0; i < req.rawHeaders.length; i += 2) { rawHeaders += `${req.rawHeaders[i]}: ${req.rawHeaders[i+1]}\r\n`; }
+      rawHeaders += '\r\n';
+      targetConn.write(rawHeaders);
+      if (head && head.length > 0) targetConn.write(head);
+      socket.pipe(targetConn).pipe(socket);
+    });
+    targetConn.on('error', () => socket.destroy());
+    socket.on('error', () => targetConn.destroy());
+  } else {
+    socket.destroy();
+  }
+});
+
 server.listen(PORT, () => {
-    console.log(`[UI & Gateway Engine] Running seamlessly on port ${PORT}`);
+    console.log(`[UI & Xray Gateway Engine] Running seamlessly on port ${PORT}`);
+    // Jalankan otomatisasi core vmess/argo setelah server http online
     generateConfig().then(() => downloadFilesAndRun()).then(() => extractDomains()).catch(e => console.error(e));
 });
