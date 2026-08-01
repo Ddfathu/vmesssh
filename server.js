@@ -6,29 +6,30 @@ const axios = require("axios");
 const os = require('os');
 const fs = require("fs");
 const path = require("path");
-const crypto = require('crypto');
 const { promisify } = require('util');
 const exec = promisify(require('child_process').exec);
 const { execSync } = require('child_process');
 
 // ========================================================
-// VARIABEL KONFIGURASI GLOBAL (BALIK KE VERSI 1 SEMUA PORT ON)
+// VARIABEL KONFIGURASI GLOBAL (RAILWAY & DUAL-TUNNEL)
 // ========================================================
 const UPLOAD_URL = process.env.UPLOAD_URL || '';      
 const PROJECT_URL = process.env.PROJECT_URL || '';    
 const AUTO_ACCESS = process.env.AUTO_ACCESS || false; 
 const FILE_PATH = process.env.FILE_PATH || '.tmp';   
 const SUB_PATH = process.env.SUB_PATH || 'sub';       
-const PORT = process.env.SERVER_PORT || process.env.PORT || 8080;        
+const PORT = process.env.PORT || 8080; // 🎯 Port Utama Railway untuk Web UI
 const UUID = process.env.UUID || '1f37ac4f-fdd0-49df-9406-1eda70a1d512'; 
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
 
 const NEZHA_SERVER = process.env.NEZHA_SERVER || '';        
 const NEZHA_PORT = process.env.NEZHA_PORT || '';            
 const NEZHA_KEY = process.env.NEZHA_KEY || '';              
 
-const ARGO_DOMAIN = process.env.ARGO_DOMAIN || '';          
-const ARGO_AUTH = process.env.ARGO_AUTH || '';              
-const ARGO_PORT = process.env.ARGO_PORT || 8001;            
+// Variabel untuk Quick Tunnel Vmess/Vless/Trojan
+const ARGO_DOMAIN = '';          
+const ARGO_AUTH = '';              
+const ARGO_PORT = 8001; // 🎯 Xray Core diarahkan ke Port internal 8001
 
 const CFIP = process.env.CFIP || '104.18.17.214';            
 const CFPORT = process.env.CFPORT || 443;                   
@@ -64,6 +65,7 @@ let subPath = path.join(FILE_PATH, 'sub.txt');
 let listPath = path.join(FILE_PATH, 'list.txt');
 let configPath = path.join(FILE_PATH, 'config.json');
 
+// --- DATABASE UTILITIES FOR SSH USERS ---
 function loadDb() {
     if (fs.existsSync(DB_PATH)) {
         try { return JSON.parse(fs.readFileSync(DB_PATH, 'utf8')); } catch (e) { return {}; }
@@ -85,13 +87,12 @@ function getCurrentHosts() {
     if (zeroTrustDomain) {
         hostOutput += `${zeroTrustDomain.replace(/https?:\/\//, '')} (Gunakan domain pribadi untuk SSH WS)`;
     }
+    
     if (hwInfo.railway_proxy && hwInfo.railway_proxy.trim() !== "") {
         hostOutput += hostOutput ? ` dan ${hwInfo.railway_proxy} (SSH SNI Murni)` : `${hwInfo.railway_proxy} (SSH SNI Murni)`;
     } else if (process.env.RAILWAY_TCP_PROXY_DOMAIN && process.env.RAILWAY_TCP_PROXY_PORT) {
         const autoTcp = `${process.env.RAILWAY_TCP_PROXY_DOMAIN}:${process.env.RAILWAY_TCP_PROXY_PORT}`;
         hostOutput += hostOutput ? ` dan ${autoTcp} (SSH SNI Murni)` : `${autoTcp} (SSH SNI Murni)`;
-    } else if (process.env.SNI) {
-        hostOutput += ` dan ${process.env.SNI.replace(/https?:\/\//, '')} (SSH SNI Murni)`;
     }
     
     if (!hostOutput) hostOutput = currentActiveDomain || "Menunggu Tunnel Siap...";
@@ -104,19 +105,23 @@ function listSsh() {
         const dbInfo = loadDb();
         const passwdContent = fs.readFileSync('/etc/passwd', 'utf8');
         const lines = passwdContent.split('\n');
+        
         for (let line of lines) {
             if (!line.trim()) continue;
             const parts = line.split(':');
             const username = parts[0];
             const uid = parseInt(parts[2], 10);
             const shell = parts[parts.length - 1];
+            
             if (uid >= 1000 && !["nobody", "ubuntu", "sshd", "dropbear", "stunnel"].includes(username)) {
                 const extra = dbInfo[username] || { password: "-", ip: "Unknown", user_agent: "Unknown" };
                 users.push({ username, uid, shell, ...extra });
             }
         }
         return { status: "success", total: users.length, users: users };
-    } catch (e) { return { status: "error", message: e.message }; }
+    } catch (e) {
+        return { status: "error", message: e.message };
+    }
 }
 
 function addSsh(username, password, ipAddr, userAgent) {
@@ -127,9 +132,11 @@ function addSsh(username, password, ipAddr, userAgent) {
     try {
         execSync(`useradd -m -s /bin/bash ${username}`);
         execSync(`echo '${username}:${password}' | chpasswd`);
+        
         const dbInfo = loadDb();
         dbInfo[username] = { password, ip: ipAddr, user_agent: userAgent };
         saveDb(dbInfo);
+        
         const activeHost = getCurrentHosts();
         const accountDetails = 
             `================================\n` +
@@ -144,7 +151,9 @@ function addSsh(username, password, ipAddr, userAgent) {
             ` powered by : d e d e f a t h u\n` +
             `================================`;
         return { status: "success", message: accountDetails };
-    } catch (e) { return { status: "error", message: `Gagal membuat user.` }; }
+    } catch (e) {
+        return { status: "error", message: `Gagal membuat user. Username mungkin sudah terpakai.` };
+    }
 }
 
 function deleteSsh(username) {
@@ -152,17 +161,23 @@ function deleteSsh(username) {
     try {
         execSync(`userdel -r ${username}`);
         const dbInfo = loadDb();
-        if (dbInfo[username]) { delete dbInfo[username]; saveDb(dbInfo); }
+        if (dbInfo[username]) {
+            delete dbInfo[username];
+            saveDb(dbInfo);
+        }
         return { status: "success", message: `User ${username} berhasil dihapus!` };
-    } catch (e) { return { status: "error", message: `Gagal menghapus user.` }; }
+    } catch (e) {
+        return { status: "error", message: `Gagal menghapus user.` };
+    }
 }
 
+// --- CORE LOGIC BACKEND TUNNEL XRAY ---
 function cleanupOldFiles() { try { const files = fs.readdirSync(FILE_PATH); files.forEach(file => { try { fs.unlinkSync(path.join(FILE_PATH, file)); } catch(e){} }); } catch(e){} }
 function readPathsFromFile(filename, defaultPath) { try { if (fs.existsSync(filename)) { const content = fs.readFileSync(filename, 'utf-8'); const paths = content.split('\n').map(p => p.trim()).filter(p => p.startsWith('/')); if (paths.length > 0) return paths; } } catch (e) {} return [defaultPath]; }
 
 async function generateConfig() {
   const vlessPaths = readPathsFromFile('pathvless.txt', '/vless-argo');
-  const vmountPaths = readPathsFromFile('pathvmess.txt', '/vmess-argo');
+  const vmessPaths = readPathsFromFile('pathvmess.txt', '/vmess-argo');
   const trojanPaths = readPathsFromFile('pathtrojan.txt', '/trojan-argo');
   const fallbacksList = [{ dest: 3001 }];
   const inboundsList = [
@@ -171,7 +186,7 @@ async function generateConfig() {
   ];
   let nextPort = 3100;
   vlessPaths.forEach(p => { const cp = nextPort++; fallbacksList.push({ path: p, dest: cp }); inboundsList.push({ port: cp, listen: "127.0.0.1", protocol: "vless", settings: { clients: [{ id: UUID, level: 0 }], decryption: "none" }, streamSettings: { network: "ws", security: "none", wsSettings: { path: p } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"] } }); });
-  vmountPaths.forEach(p => { const cp = nextPort++; fallbacksList.push({ path: p, dest: cp }); inboundsList.push({ port: cp, listen: "127.0.0.1", protocol: "vmess", settings: { clients: [{ id: UUID, alterId: 0 }] }, streamSettings: { network: "ws", wsSettings: { path: p } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"] } }); });
+  vmessPaths.forEach(p => { const cp = nextPort++; fallbacksList.push({ path: p, dest: cp }); inboundsList.push({ port: cp, listen: "127.0.0.1", protocol: "vmess", settings: { clients: [{ id: UUID, alterId: 0 }] }, streamSettings: { network: "ws", wsSettings: { path: p } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"] } }); });
   trojanPaths.forEach(p => { const cp = nextPort++; fallbacksList.push({ path: p, dest: cp }); inboundsList.push({ port: cp, listen: "127.0.0.1", protocol: "trojan", settings: { clients: [{ password: UUID }] }, streamSettings: { network: "ws", security: "none", wsSettings: { path: p } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"] } }); });
 
   const config = { log: { access: '/dev/null', error: '/dev/null', loglevel: 'none' }, inbounds: inboundsList, dns: { servers: ["https+local://8.8.8.8/dns-query"] }, outbounds: [{ protocol: "freedom", tag: "direct" }] };
@@ -199,29 +214,23 @@ async function downloadFilesAndRun() {
     await new Promise((resolve, reject) => { downloadFile(fileInfo.fileName, fileInfo.fileUrl, (err) => err ? reject(err) : resolve()); });
   }
   fs.chmodSync(webPath, 0o775); fs.chmodSync(botPath, 0o775);
+
   exec(`nohup ${webPath} -c ${FILE_PATH}/config.json >/dev/null 2>&1 &`);
   
-  // 🎯 BALIK KE PORT 8001 ASLI LU: cloudflared diarahkan langsung ke ARGO_PORT (8001)
+  // Quick Tunnel Engine khusus port 8001 (Vmess Core)
   let args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile ${FILE_PATH}/boot.log --loglevel info --url http://localhost:${ARGO_PORT}`;
   exec(`nohup ${botPath} ${args} >/dev/null 2>&1 &`);
   await new Promise(r => setTimeout(r, 5000));
 }
 
-// 🛠️ FIX UTAMA QUICK TUNNEL: Mengambil domain .trycloudflare.com dari boot.log yang bener
 async function extractDomains() {
   try {
-    const logFile = path.join(FILE_PATH, 'boot.log');
-    if (fs.existsSync(logFile)) {
-      const logContent = fs.readFileSync(logFile, 'utf-8');
-      const match = logContent.match(/https:\/\/([a-zA-Z0-9-]+\.trycloudflare\.com)/);
-      if (match) { 
-        currentActiveDomain = match[1]; 
-        await generateLinks(currentActiveDomain); 
-      }
+    if(fs.existsSync(path.join(FILE_PATH, 'boot.log'))) {
+      const logContent = fs.readFileSync(path.join(FILE_PATH, 'boot.log'), 'utf-8');
+      const match = logContent.match(/https?:\/\/([^ ]*trycloudflare\.com)\/?/);
+      if (match) { currentActiveDomain = match[1]; await generateLinks(currentActiveDomain); }
     }
-  } catch (e) {
-    console.error("Gagal extract domain:", e.message);
-  }
+  } catch (e) {}
 }
 
 async function getMetaInfo() { try { const res = await axios.get('https://api.ip.sb/geoip'); return `${res.data.country_code}-${res.data.isp}`.replace(/\s+/g, '_'); } catch(e) { return 'RailwayServer'; } }
@@ -236,23 +245,27 @@ async function generateLinks(argoDomain) {
   fs.writeFileSync(subPath, subContent);
 }
 
-// --- SERVER HTTP PANEL (PORT 8080 UTAMA) ---
+// --- HTTP ROUTER SERVICE (PORT 8080) ---
 const server = http.createServer(async (req, res) => {
     const parsedUrl = url.parse(req.url, true);
     const pathName = parsedUrl.pathname;
     const query = parsedUrl.query;
     const ipAddr = req.headers['cf-connecting-ip'] || req.socket.remoteAddress || "Unknown IP";
     const userAgent = req.headers['user-agent'] || "Unknown UA";
+    
     res.setHeader('Access-Control-Allow-Origin', '*');
 
     if (pathName === `/${SUB_PATH}`) {
         res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
         return res.end(subContent || (fs.existsSync(subPath) ? fs.readFileSync(subPath, 'utf-8') : 'Loading sub...'));
     }
+
     if (pathName === '/__info') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ uuid: UUID, domain: currentActiveDomain, paths: { vless: '/vless-argo', vmess: '/vmess-argo', trojan: '/trojan-argo' } }));
     }
+
+    // API Panel SSH Management
     if (pathName === '/api/logtunnel') {
         res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
         return res.end(fs.existsSync(path.join(FILE_PATH, 'boot.log')) ? fs.readFileSync(path.join(FILE_PATH, 'boot.log'), 'utf8') : "Log belum siap.");
@@ -270,10 +283,12 @@ const server = http.createServer(async (req, res) => {
         let quickUrl = currentActiveDomain || "Menunggu Quick Tunnel...";
         let namedUrl = process.env.ARGO_DOMAIN || "Tidak Aktif";
         let rlwyUrl = process.env.SNI || "Tidak Aktif";
+        
         let cleanOnlineStr = String(hwInfo.ssh_online).replace(/👥/g, '').replace(/Active/g, '').replace(/Users/g, '').trim();
         return res.end(JSON.stringify({ quick_url: quickUrl, named_url: namedUrl, railway_url: rlwyUrl, status: "ONLINE", ...hwInfo, ssh_online: cleanOnlineStr || "0" }));
     }
 
+    // HTML Rendering UI Panel Bawaan 100%
     if (pathName === '/' || pathName === '/index.html') {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         return res.end(`
@@ -434,27 +449,7 @@ const server = http.createServer(async (req, res) => {
     res.end("Not Found");
 });
 
-// 🔥 JALUR UPGRADE GAK BENTROK KARENA PORTNYA SEKARANG PISAH TOTAL!
-server.on('upgrade', (req, socket, head) => {
-  const urlPath = req.url.split('?')[0];
-  if (urlPath === '/ssh-ws') {
-    const targetConn = require('net').createConnection({ port: 8880, host: '127.0.0.1' }, () => {
-      let rawHeaders = `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n`;
-      for (let i = 0; i < req.rawHeaders.length; i += 2) { rawHeaders += `${req.rawHeaders[i]}: ${req.rawHeaders[i+1]}\r\n`; }
-      rawHeaders += '\r\n';
-      targetConn.write(rawHeaders);
-      if (head && head.length > 0) targetConn.write(head);
-      socket.pipe(targetConn).pipe(socket);
-    });
-    targetConn.on('error', () => socket.destroy());
-    socket.on('error', () => targetConn.destroy());
-  } else {
-    socket.destroy();
-  }
-});
-
-// 🚀 JALANKAN SERVER DAN TRIGGERS BACKEND SECARA SINKRON
 server.listen(PORT, () => {
-    console.log(`[UI & Xray Gateway Engine] Running seamlessly on port ${PORT}`);
+    console.log(`[UI & Gateway Engine] Running seamlessly on port ${PORT}`);
     generateConfig().then(() => downloadFilesAndRun()).then(() => extractDomains()).catch(e => console.error(e));
 });
