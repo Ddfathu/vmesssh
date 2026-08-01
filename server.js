@@ -34,6 +34,7 @@ const CFIP = process.env.CFIP || '104.18.17.214';
 const CFPORT = process.env.CFPORT || 443;                   
 const NAME = process.env.NAME || 'ddfathu';                        
 
+// 🛠️ PERBAIKAN 1: Menyelaraskan path log ke target ekstraksi domain (.tmp/boot.log)
 const LOG_PATH = path.join(FILE_PATH, "boot.log"); 
 const STATS_PATH = "/tmp/server_stats.json";
 const DB_PATH = "/tmp/ssh_details.json";
