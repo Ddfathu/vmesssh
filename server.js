@@ -35,8 +35,8 @@ const CFIP = process.env.CFIP || '104.18.17.214';
 const CFPORT = process.env.CFPORT || 443;                   
 const NAME = process.env.NAME || 'ddfathu';                        
 
-const LOG_PATH = "/tmp/cloudflared.log";
-const NAMED_LOG_PATH = "/tmp/named_tunnel.log";
+// 🎯 FIX PATH SINKRON: Mengarah ke file log argo yang sebenarnya (.tmp/boot.log)
+const LOG_PATH = path.join(FILE_PATH, "boot.log"); 
 const STATS_PATH = "/tmp/server_stats.json";
 const DB_PATH = "/tmp/ssh_details.json";
 
@@ -66,7 +66,6 @@ let webPath = path.join(FILE_PATH, webName);
 let botPath = path.join(FILE_PATH, botName);
 let subPath = path.join(FILE_PATH, 'sub.txt');
 let listPath = path.join(FILE_PATH, 'list.txt');
-let bootLogPath = path.join(FILE_PATH, 'boot.log');
 let configPath = path.join(FILE_PATH, 'config.json');
 
 // --- DATABASE & HELPER MANAGEMENT PANEL SSH ---
@@ -178,8 +177,8 @@ function deleteSsh(username) {
     }
 }
 
-// --- LOGIKA BACKEND VMESS/ARGO CORE (DI-RECYCLE DARI SCRIPT AWAL LU) ---
-function deleteNodes() { /* Kosong / Dipertahankan sesuai script awal lu */ }
+// --- LOGIKA BACKEND VMESS/ARGO CORE ---
+function deleteNodes() { }
 function cleanupOldFiles() { try { const files = fs.readdirSync(FILE_PATH); files.forEach(file => { try { fs.unlinkSync(path.join(FILE_PATH, file)); } catch(e){} }); } catch(e){} }
 function readPathsFromFile(filename, defaultPath) { try { if (fs.existsSync(filename)) { const content = fs.readFileSync(filename, 'utf-8'); const paths = content.split('\n').map(p => p.trim()).filter(p => p.startsWith('/')); if (paths.length > 0) return paths; } } catch (e) {} return [defaultPath]; }
 
@@ -225,20 +224,21 @@ async function downloadFilesAndRun() {
 
   exec(`nohup ${webPath} -c ${FILE_PATH}/config.json >/dev/null 2>&1 &`);
   
-  let args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile ${FILE_PATH}/boot.log --loglevel info --url http://localhost:${ARGO_PORT}`;
+  let args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile ${LOG_PATH} --loglevel info --url http://localhost:${ARGO_PORT}`;
   if (ARGO_AUTH.match(/^[A-Z0-9a-z=]{120,250}$/)) args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 run --token ${ARGO_AUTH}`;
   
   exec(`nohup ${botPath} ${args} >/dev/null 2>&1 &`);
   await new Promise(r => setTimeout(r, 5000));
 }
 
+// 🎯 FIX UTAMA: Pembacaan link Quick Tunnel diarahkan secara presisi ke LOG_PATH yang valid
 async function extractDomains() {
   if (ARGO_AUTH && ARGO_DOMAIN) { currentActiveDomain = ARGO_DOMAIN; await generateLinks(ARGO_DOMAIN); }
   else {
     try {
-      if(fs.existsSync(path.join(FILE_PATH, 'boot.log'))) {
-        const logContent = fs.readFileSync(path.join(FILE_PATH, 'boot.log'), 'utf-8');
-        const match = logContent.match(/https?:\/\/([^ ]*trycloudflare\.com)\/?/);
+      if(fs.existsSync(LOG_PATH)) {
+        const logContent = fs.readFileSync(LOG_PATH, 'utf-8');
+        const match = logContent.match(/https:\/\/([a-zA-Z0-9-]+\.trycloudflare\.com)/);
         if (match) { currentActiveDomain = match[1]; await generateLinks(currentActiveDomain); }
       }
     } catch (e) {}
@@ -267,22 +267,20 @@ const server = http.createServer(async (req, res) => {
     
     res.setHeader('Access-Control-Allow-Origin', '*');
 
-    // 1. Jalur Link Sub Vmess Bawaan Awal Lu
     if (pathName === `/${SUB_PATH}`) {
         res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
         return res.end(subContent || (fs.existsSync(subPath) ? fs.readFileSync(subPath, 'utf-8') : 'Loading sub...'));
     }
 
-    // 2. Info Internal
     if (pathName === '/__info') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ uuid: UUID, domain: currentActiveDomain || ARGO_DOMAIN, paths: { vless: '/vless-argo', vmess: '/vmess-argo', trojan: '/trojan-argo' } }));
     }
 
-    // 3. API Panel SSH Management Temen Lu
+    // API Panel SSH Management Temen Lu
     if (pathName === '/api/logtunnel') {
         res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-        return res.end(fs.existsSync(path.join(FILE_PATH, 'boot.log')) ? fs.readFileSync(path.join(FILE_PATH, 'boot.log'), 'utf8') : "Log belum siap.");
+        return res.end(fs.existsSync(LOG_PATH) ? fs.readFileSync(LOG_PATH, 'utf8') : "Log belum siap.");
     }
     if (pathName === '/api/add') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(addSsh(query.user, query.pass, ipAddr, userAgent))); }
     if (pathName === '/api/delete') { res.writeHead(200, { 'Content-Type': 'application/json' }); if (query.token !== ADMIN_PASSWORD) return res.end(JSON.stringify({ status: "error", message: "Akses Ditolak!" })); return res.end(JSON.stringify(deleteSsh(query.user))); }
@@ -302,7 +300,6 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ quick_url: quickUrl, named_url: namedUrl, railway_url: rlwyUrl, status: "ONLINE", ...hwInfo, ssh_online: cleanOnlineStr || "0" }));
     }
 
-    // 4. Render UI HTML Utama (PORT 8080 SEJATI)
     if (pathName === '/' || pathName === '/index.html') {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         return res.end(`
@@ -379,10 +376,10 @@ const server = http.createServer(async (req, res) => {
                         <tbody id="ssh-table-body"><tr><td colspan="3" style="text-align:center; color:#64748b;">Loading accounts...</td></tr></tbody>
                     </table>
                 </div>
-                <div class="url-section" style="border-color: #a855f7;"><div class="url-title" style="color: #d8b4fe;">Server ssh aktif</div><div class="url-box" id="named-url">Loading...</div><button class="btn-copy" id="btn-copy-named" style="background:#a855f7; color:#fff;" onclick="copyTxt('named-url', 'btn-copy-named')">📋 COPY SSH SERVER</button></div>
+                <div class="url-section" style="border-color: #a855f7;"><div class="url-title" style="color: #d8b4fe;">Server ssh aktif (zero trust domain)</div><div class="url-box" id="named-url">Loading...</div><button class="btn-copy" id="btn-copy-named" style="background:#a855f7; color:#fff;" onclick="copyTxt('named-url', 'btn-copy-named')">📋 COPY SSH SERVER</button></div>
                 <div class="url-section" style="border-color: #f43f5e;"><div class="url-title" style="color: #fb7185;">Server SNI/Stunnel SNI MURNI</div><div class="url-box" id="railway-url" style="color: #f43f5e;">Loading...</div><button class="btn-copy" id="btn-copy-railway" style="background:#f43f5e; color:#fff;" onclick="copyTxt('railway-url', 'btn-copy-railway')">📋 COPY SERVER SSH SNI</button></div>
                 <div class="url-section"><div class="url-title">Quick Tunnel url (Vmess/Vless/Trojan Sub)</div><div class="url-box" id="quick-url">Loading...</div><button class="btn-copy" id="btn-copy-quick" onclick="copyTxt('quick-url', 'btn-copy-quick')">📋 COPY SUB DOMAIN</button></div>
-                <p class="note">Tiga rute tunnel berjalan sinkron tanpa bentrok.<br>Node.js Core Engine Rendering System.</p>
+                <p class="note">Dual terowongan berjalan sinkron terpisah.<br>Node.js Core Engine Rendering System.</p>
             </div>
             <script>
                 let adminToken = localStorage.getItem("admin_session_token") || "";
@@ -463,7 +460,7 @@ const server = http.createServer(async (req, res) => {
     res.end("Not Found");
 });
 
-// 🔥 PROXY UPGRADE: Tangkap Payload WebSocket SSH, Oper langsung ke ws-proxy.js (Port 8880)
+// UPGRADE LISTENER UNTUK PATH SPECIAL /SSH-WS PIPING
 server.on('upgrade', (req, socket, head) => {
   const urlPath = req.url.split('?')[0];
   if (urlPath === '/ssh-ws') {
@@ -482,8 +479,8 @@ server.on('upgrade', (req, socket, head) => {
   }
 });
 
+// ENGINE LISTENER UTAMA BINDING PORT 8080 UTUH TANPA RUBAH
 server.listen(PORT, () => {
     console.log(`[UI & Xray Gateway Engine] Running seamlessly on port ${PORT}`);
-    // Jalankan otomatisasi core vmess/argo setelah server http online
     generateConfig().then(() => downloadFilesAndRun()).then(() => extractDomains()).catch(e => console.error(e));
 });
