@@ -95,7 +95,7 @@ function getCurrentHosts() {
     
     if (process.env.RAILWAY_TCP_PROXY_DOMAIN && process.env.RAILWAY_TCP_PROXY_PORT) {
         const autoTcp = `${process.env.RAILWAY_TCP_PROXY_DOMAIN}:${process.env.RAILWAY_TCP_PROXY_PORT}`;
-        hostOutput += hostOutput ? ` dan ${autoTcp}` : `${autoTcp}`;
+        hostOutput += hostOutput ? ` dan ini (SSH SNI) ${autoTcp}` : `${autoTcp}`;
     } else if (process.env.SNI) {
         hostOutput += hostOutput ? ` dan ${process.env.SNI.replace(/https?:\/\//, '')}` : `${process.env.SNI.replace(/https?:\/\//, '')}`;
     } else if (hwInfo.railway_proxy && hwInfo.railway_proxy.trim() !== "") {
