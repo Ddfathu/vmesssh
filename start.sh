@@ -1,8 +1,13 @@
 #!/bin/bash
 
-# 🔥 LOGIKA CONTOH: Buka limit socket container sedalam mungkin
+# 🔥 KUNCI UTAMA ANTI SUNEK: Buka limit socket container sedalam mungkin
 ulimit -n 65535 2>/dev/null
 ulimit -s unlimited 2>/dev/null
+
+# 🔥 PEMBASMI PROSES NYANGKUT: Paksa matiin Stunnel/Dropbear lama yang masih meluk port
+killall -9 stunnel4 dropbear badvpn-udpgw cloudflared node 2>/dev/null
+pkill -f stunnel4 2>/dev/null
+pkill -f dropbear 2>/dev/null
 
 # =================================================================
 # 🚀 ULTRA TURBO KERNEL TWEAKS (Pindahan dari Contoh ke SC Kita) 🚀
@@ -22,8 +27,8 @@ sysctl -w net.core.netdev_max_backlog=50000 2>/dev/null
 sysctl -w net.ipv4.tcp_max_syn_backlog=8192 2>/dev/null
 # =================================================================
 
-USER_NAME="${SSH_USER:-dd}"
-USER_PASS="${SSH_PASSWORD:-dd}"
+USER_NAME="${SSH_USER:-ddfathu}"
+USER_PASS="${SSH_PASSWORD:-admin123}"
 SSL_INTERNAL_PORT="2443"
 
 echo "[*] Mengonfigurasi User SSH Dropbear..."
@@ -54,19 +59,22 @@ accept = 127.0.0.1:$SSL_INTERNAL_PORT
 connect = 127.0.0.1:22
 cert = /etc/stunnel/stunnel.pem
 EOF
+
+# Pastikan pid directory bersih sebelum start
+rm -f /var/run/stunnel4/stunnel.pid 2>/dev/null
 stunnel4 /etc/stunnel/stunnel.conf
 
 echo "[*] Memulai WS-Proxy untuk SSH Dropbear di Port Lokal 8880..."
 export WS_PORT="8880"
 node ws-proxy.js &
 
-# 🔥 LOGIKA PENERAPAN: Jalankan BadVPN UDPGW hasil compile stage builder ke port global 0.0.0.0
+# 🔥 JALANKAN BADVPN UDPGW UNTUK GAME MODE (PORT GLOBAL 0.0.0.0)
 if [ -f /usr/local/bin/badvpn-udpgw ]; then
     echo "[*] Memulai BadVPN udpgw hasil compile di Port Global 7300 (Game Mode)..."
     /usr/local/bin/badvpn-udpgw --listen-addr 0.0.0.0:7300 --max-clients 500 --max-connections-for-client 20 &
 fi
 
-# Eksekusi Cloudflare Zero Trust Khusus untuk Port SSH 8880 (Gunakan ARGO_AUTH sesuai SC lu)
+# Eksekusi Cloudflare Zero Trust Khusus untuk Port SSH 8880 (Variabel Token ARGO_AUTH)
 if [ -n "$ARGO_AUTH" ]; then
     echo "[*] Menghubungkan Terowongan SSH Zero Trust ke Port 8880..."
     /usr/local/bin/cloudflared tunnel run --protocol http2 --no-tls-verify --token "$ARGO_AUTH" > /tmp/named_tunnel.log 2>&1 &
