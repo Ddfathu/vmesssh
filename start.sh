@@ -69,10 +69,13 @@ if [ -f /usr/local/bin/badvpn-udpgw ]; then
     /usr/local/bin/badvpn-udpgw --listen-addr 0.0.0.0:7300 --max-clients 500 --max-connections-for-client 20 &
 fi
 
-# Eksekusi Cloudflare Zero Trust Khusus untuk Port SSH 8880 (Variabel Token TOKEN)
+# 🔥 LOGIKA ADAPTIF PORT TUNNEL: Default ke 8880 jika variabel env ARGO_PORT tidak diisi
+TARGET_ZT_PORT="${ARGO_PORT:-8880}"
+
+# Eksekusi Cloudflare Zero Trust Khusus untuk Port Kustom (Variabel Token TOKEN)
 if [ -n "$TOKEN" ]; then
-    echo "[*] Menghubungkan Terowongan SSH Zero Trust ke Port 8880..."
-    /usr/local/bin/cloudflared tunnel run --protocol http2 --no-tls-verify --token "$TOKEN" > /tmp/named_tunnel.log 2>&1 &
+    echo "[*] Menghubungkan Terowongan SSH Zero Trust ke Port ${TARGET_ZT_PORT}..."
+    /usr/local/bin/cloudflared tunnel run --protocol http2 --no-tls-verify --token "$TOKEN" --url "http://localhost:${TARGET_ZT_PORT}" > /tmp/named_tunnel.log 2>&1 &
 else
     echo "[!] Variabel TOKEN kosong! Terowongan SSH Zero Trust tidak dapat dijalankan."
 fi
