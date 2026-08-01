@@ -39,7 +39,6 @@ const LOG_PATH = path.join(FILE_PATH, "boot.log");
 const STATS_PATH = "/tmp/server_stats.json";
 const DB_PATH = "/tmp/ssh_details.json";
 
-// 🔥 MEMORY CACHE ENGINE: Menyimpan status hardware agar UI responsif & anti-blocking
 let cachedDiskUsage = "38%";
 let cachedSshOnline = "0 User";
 let cachedUserListDetails = "Semua user offline";
@@ -293,7 +292,6 @@ const server = http.createServer(async (req, res) => {
     if (pathName === '/api/stats') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         
-        // 🎯 LOGIKA SUPER FAST: Langsung ambil data dari memori cache (UI Instant & SSH Anti-Disconnect!)
         let hwInfo = { 
             cpu_model: os.cpus()[0].model, 
             ram_total: (os.totalmem()/1024/1024/1024).toFixed(2)+" GB", 
@@ -384,7 +382,8 @@ const server = http.createServer(async (req, res) => {
                     <div class="stat-card"><div class="stat-title">RAM Used / Total</div><div class="stat-value" id="ram">Loading...</div></div>
                     <div class="stat-card"><div class="stat-title">Disk Usage (/)</div><div class="stat-value" id="disk">Loading...</div></div>
                     <div class="stat-card"><div class="stat-title">Server Uptime</div><div class="stat-value" id="uptime" style="font-size:12px;">Loading...</div></div>
-                    <div class="stat-card" style="border-color: #a855f7;"><div class="stat-title" style="color:#d8b4fe;">SSH Online Users</div><div class="stat-value" id="ssh" style="font-size:14px; color:#a855f7; line-height:1.3;">👥 0 Users</div></div>
+                    <!-- 🎯 PERBAIKAN TEKS: Mengubah label agar mencakup info user SSH maupun VPN Vmess -->
+                    <div class="stat-card" style="border-color: #a855f7;"><div class="stat-title" style="color:#d8b4fe;">SSH & VPN ONLINE USERS</div><div class="stat-value" id="ssh" style="font-size:14px; color:#a855f7; line-height:1.3;">👥 0 Users</div></div>
                 </div>
                 <div class="ssh-manager">
                     <div class="ssh-title"><span>➕ Buat Akun SSH Baru</span><span id="admin-indicator" class="admin-status-lbl">PUBLIC CREATION</span></div>
@@ -636,21 +635,19 @@ server.listen(PORT, () => {
         extractDomains();
     }, 3000);
 
-    // 🔥 LOOPING ASYNC BACKGROUND WORKER (Penyelamat Port SSH & Akselerasi UI)
-    // Berjalan aman di latar belakang secara asinkron setiap 4 detik untuk mengisi cache data stats
+    // 🔥 LOOPING ASYNC BACKGROUND WORKER DUAL DETECTOR (SSH + VMESS)
     setInterval(() => {
-        // Eksekusi Disk Asinkron (Non-Blocking)
         require('child_process').exec("df -h / | awk 'NR==2 {print $5}'", (err, stdout) => {
             if (!err && stdout.trim()) cachedDiskUsage = stdout.trim();
         });
 
-        // Eksekusi Penyaringan IP Online Asinkron (Hanya Mengambil 1 Baris IP Teratas)
-        require('child_process').exec("netstat -anp 2>/dev/null | grep dropbear | grep ESTABLISHED | awk '{print $5}' | cut -d: -f1 | sort -u", (err, stdout) => {
+        // 🎯 KUNCI UTAMA LOGIKA PENYARING DATA: Menggabungkan deteksi port dropbear & port Xray (8001)
+        require('child_process').exec("netstat -anp 2>/dev/null | grep -E 'dropbear|:8001' | grep ESTABLISHED | awk '{print $5}' | cut -d: -f1 | sort -u", (err, stdout) => {
             if (!err && stdout.trim()) {
                 const ipLines = stdout.trim().split('\n').filter(Boolean);
                 if (ipLines.length > 0) {
                     cachedSshOnline = "1 User";
-                    cachedUserListDetails = `👤 IP Active: ${ipLines[0]}`; // Filter murni baris teratas asli
+                    cachedUserListDetails = `👤 IP Active: ${ipLines[0]}`;
                 } else {
                     cachedSshOnline = "0 User";
                     cachedUserListDetails = "Semua user offline";
