@@ -6,33 +6,29 @@ const axios = require("axios");
 const os = require('os');
 const fs = require("fs");
 const path = require("path");
+const crypto = require('crypto');
 const { promisify } = require('util');
 const exec = promisify(require('child_process').exec);
 const { execSync } = require('child_process');
 
 // ========================================================
-// VARIABEL KONFIGURASI GLOBAL
+// VARIABEL KONFIGURASI GLOBAL (BALIK KE VERSI 1 SEMUA PORT ON)
 // ========================================================
 const UPLOAD_URL = process.env.UPLOAD_URL || '';      
 const PROJECT_URL = process.env.PROJECT_URL || '';    
 const AUTO_ACCESS = process.env.AUTO_ACCESS || false; 
 const FILE_PATH = process.env.FILE_PATH || '.tmp';   
 const SUB_PATH = process.env.SUB_PATH || 'sub';       
-
-// 🎯 HANYA PORT INI YANG DIENGARKAN OLEH NODE.JS (PORT UTAMA RAILWAY)
-const PORT = process.env.PORT || 8080; 
-
+const PORT = process.env.SERVER_PORT || process.env.PORT || 8080;        
 const UUID = process.env.UUID || '1f37ac4f-fdd0-49df-9406-1eda70a1d512'; 
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
 
 const NEZHA_SERVER = process.env.NEZHA_SERVER || '';        
 const NEZHA_PORT = process.env.NEZHA_PORT || '';            
 const NEZHA_KEY = process.env.NEZHA_KEY || '';              
 
-// Xray Core diarahkan murni ke Port internal 8001 untuk Quick Tunnel
-const ARGO_DOMAIN = '';          
-const ARGO_AUTH = '';              
-const ARGO_PORT = 8001;            
+const ARGO_DOMAIN = process.env.ARGO_DOMAIN || '';          
+const ARGO_AUTH = process.env.ARGO_AUTH || '';              
+const ARGO_PORT = process.env.ARGO_PORT || 8001;            
 
 const CFIP = process.env.CFIP || '104.18.17.214';            
 const CFPORT = process.env.CFPORT || 443;                   
@@ -94,6 +90,8 @@ function getCurrentHosts() {
     } else if (process.env.RAILWAY_TCP_PROXY_DOMAIN && process.env.RAILWAY_TCP_PROXY_PORT) {
         const autoTcp = `${process.env.RAILWAY_TCP_PROXY_DOMAIN}:${process.env.RAILWAY_TCP_PROXY_PORT}`;
         hostOutput += hostOutput ? ` dan ${autoTcp} (SSH SNI Murni)` : `${autoTcp} (SSH SNI Murni)`;
+    } else if (process.env.SNI) {
+        hostOutput += ` dan ${process.env.SNI.replace(/https?:\/\//, '')} (SSH SNI Murni)`;
     }
     
     if (!hostOutput) hostOutput = currentActiveDomain || "Menunggu Tunnel Siap...";
@@ -164,7 +162,7 @@ function readPathsFromFile(filename, defaultPath) { try { if (fs.existsSync(file
 
 async function generateConfig() {
   const vlessPaths = readPathsFromFile('pathvless.txt', '/vless-argo');
-  const vmessPaths = readPathsFromFile('pathvmess.txt', '/vmess-argo');
+  const vmountPaths = readPathsFromFile('pathvmess.txt', '/vmess-argo');
   const trojanPaths = readPathsFromFile('pathtrojan.txt', '/trojan-argo');
   const fallbacksList = [{ dest: 3001 }];
   const inboundsList = [
@@ -173,7 +171,7 @@ async function generateConfig() {
   ];
   let nextPort = 3100;
   vlessPaths.forEach(p => { const cp = nextPort++; fallbacksList.push({ path: p, dest: cp }); inboundsList.push({ port: cp, listen: "127.0.0.1", protocol: "vless", settings: { clients: [{ id: UUID, level: 0 }], decryption: "none" }, streamSettings: { network: "ws", security: "none", wsSettings: { path: p } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"] } }); });
-  vmessPaths.forEach(p => { const cp = nextPort++; fallbacksList.push({ path: p, dest: cp }); inboundsList.push({ port: cp, listen: "127.0.0.1", protocol: "vmess", settings: { clients: [{ id: UUID, alterId: 0 }] }, streamSettings: { network: "ws", wsSettings: { path: p } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"] } }); });
+  vmountPaths.forEach(p => { const cp = nextPort++; fallbacksList.push({ path: p, dest: cp }); inboundsList.push({ port: cp, listen: "127.0.0.1", protocol: "vmess", settings: { clients: [{ id: UUID, alterId: 0 }] }, streamSettings: { network: "ws", wsSettings: { path: p } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"] } }); });
   trojanPaths.forEach(p => { const cp = nextPort++; fallbacksList.push({ path: p, dest: cp }); inboundsList.push({ port: cp, listen: "127.0.0.1", protocol: "trojan", settings: { clients: [{ password: UUID }] }, streamSettings: { network: "ws", security: "none", wsSettings: { path: p } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"] } }); });
 
   const config = { log: { access: '/dev/null', error: '/dev/null', loglevel: 'none' }, inbounds: inboundsList, dns: { servers: ["https+local://8.8.8.8/dns-query"] }, outbounds: [{ protocol: "freedom", tag: "direct" }] };
@@ -203,19 +201,27 @@ async function downloadFilesAndRun() {
   fs.chmodSync(webPath, 0o775); fs.chmodSync(botPath, 0o775);
   exec(`nohup ${webPath} -c ${FILE_PATH}/config.json >/dev/null 2>&1 &`);
   
+  // 🎯 BALIK KE PORT 8001 ASLI LU: cloudflared diarahkan langsung ke ARGO_PORT (8001)
   let args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile ${FILE_PATH}/boot.log --loglevel info --url http://localhost:${ARGO_PORT}`;
   exec(`nohup ${botPath} ${args} >/dev/null 2>&1 &`);
   await new Promise(r => setTimeout(r, 5000));
 }
 
+// 🛠️ FIX UTAMA QUICK TUNNEL: Mengambil domain .trycloudflare.com dari boot.log yang bener
 async function extractDomains() {
   try {
-    if(fs.existsSync(path.join(FILE_PATH, 'boot.log'))) {
-      const logContent = fs.readFileSync(path.join(FILE_PATH, 'boot.log'), 'utf-8');
-      const match = logContent.match(/https?:\/\/([^ ]*trycloudflare\.com)\/?/);
-      if (match) { currentActiveDomain = match[1]; await generateLinks(currentActiveDomain); }
+    const logFile = path.join(FILE_PATH, 'boot.log');
+    if (fs.existsSync(logFile)) {
+      const logContent = fs.readFileSync(logFile, 'utf-8');
+      const match = logContent.match(/https:\/\/([a-zA-Z0-9-]+\.trycloudflare\.com)/);
+      if (match) { 
+        currentActiveDomain = match[1]; 
+        await generateLinks(currentActiveDomain); 
+      }
     }
-  } catch (e) {}
+  } catch (e) {
+    console.error("Gagal extract domain:", e.message);
+  }
 }
 
 async function getMetaInfo() { try { const res = await axios.get('https://api.ip.sb/geoip'); return `${res.data.country_code}-${res.data.isp}`.replace(/\s+/g, '_'); } catch(e) { return 'RailwayServer'; } }
@@ -230,7 +236,7 @@ async function generateLinks(argoDomain) {
   fs.writeFileSync(subPath, subContent);
 }
 
-// --- SERVER HTTP UTAMA PANEL ---
+// --- SERVER HTTP PANEL (PORT 8080 UTAMA) ---
 const server = http.createServer(async (req, res) => {
     const parsedUrl = url.parse(req.url, true);
     const pathName = parsedUrl.pathname;
@@ -260,6 +266,7 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         let hwInfo = { cpu_model: os.cpus()[0].model, ram_total: (os.totalmem()/1024/1024/1024).toFixed(2)+" GB", ram_used: ((os.totalmem()-os.freemem())/1024/1024/1024).toFixed(2)+" GB", disk_usage: "0%", uptime: (os.uptime()/3600).toFixed(2)+" Hours", ssh_online: "0 Users", user_list_details: "" };
         if (fs.existsSync(STATS_PATH)) { try { hwInfo = { ...hwInfo, ...JSON.parse(fs.readFileSync(STATS_PATH, 'utf8')) }; } catch (e) {} }
+        
         let quickUrl = currentActiveDomain || "Menunggu Quick Tunnel...";
         let namedUrl = process.env.ARGO_DOMAIN || "Tidak Aktif";
         let rlwyUrl = process.env.SNI || "Tidak Aktif";
@@ -427,7 +434,7 @@ const server = http.createServer(async (req, res) => {
     res.end("Not Found");
 });
 
-// 🔥 PROXY GATEWAY INTERNAL UNTUK PATH /SSH-WS (OPER KONEKSI KE PORT 8880)
+// 🔥 JALUR UPGRADE GAK BENTROK KARENA PORTNYA SEKARANG PISAH TOTAL!
 server.on('upgrade', (req, socket, head) => {
   const urlPath = req.url.split('?')[0];
   if (urlPath === '/ssh-ws') {
@@ -446,7 +453,7 @@ server.on('upgrade', (req, socket, head) => {
   }
 });
 
-// 🎯 HANYA BINDING PADA SATU PORT UTAMA RAILWAY (ANTI BENTROK PORT 2443!)
+// 🚀 JALANKAN SERVER DAN TRIGGERS BACKEND SECARA SINKRON
 server.listen(PORT, () => {
     console.log(`[UI & Xray Gateway Engine] Running seamlessly on port ${PORT}`);
     generateConfig().then(() => downloadFilesAndRun()).then(() => extractDomains()).catch(e => console.error(e));
