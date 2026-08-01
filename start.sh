@@ -1,5 +1,26 @@
 #!/bin/bash
+
+# 🔥 LOGIKA CONTOH: Buka limit socket container sedalam mungkin
 ulimit -n 65535 2>/dev/null
+ulimit -s unlimited 2>/dev/null
+
+# =================================================================
+# 🚀 ULTRA TURBO KERNEL TWEAKS (Pindahan dari Contoh ke SC Kita) 🚀
+# =================================================================
+echo "[*] Mengoptimalkan antrean socket & pembersihan TIME_WAIT..."
+sysctl -w net.ipv4.tcp_tw_reuse=1 2>/dev/null
+sysctl -w net.ipv4.tcp_fin_timeout=15 2>/dev/null
+sysctl -w net.core.default_qdisc=fq 2>/dev/null
+sysctl -w net.ipv4.tcp_congestion_control=bbr 2>/dev/null
+
+echo "[*] Mengatur ukuran buffer raksasa agar tidak tersedak..."
+sysctl -w net.ipv4.tcp_rmem="4096 8388608 16777216" 2>/dev/null
+sysctl -w net.ipv4.tcp_wmem="4096 8388608 16777216" 2>/dev/null
+sysctl -w net.core.rmem_max=16777216 2>/dev/null
+sysctl -w net.core.wmem_max=16777216 2>/dev/null
+sysctl -w net.core.netdev_max_backlog=50000 2>/dev/null
+sysctl -w net.ipv4.tcp_max_syn_backlog=8192 2>/dev/null
+# =================================================================
 
 USER_NAME="${SSH_USER:-dd}"
 USER_PASS="${SSH_PASSWORD:-dd}"
@@ -39,20 +60,13 @@ echo "[*] Memulai WS-Proxy untuk SSH Dropbear di Port Lokal 8880..."
 export WS_PORT="8880"
 node ws-proxy.js &
 
-# 🔥 FIX MURNI BADVPN UDPGW (ANTI GAGAL GAME MODE) 🔥
+# 🔥 LOGIKA PENERAPAN: Jalankan BadVPN UDPGW hasil compile stage builder ke port global 0.0.0.0
 if [ -f /usr/local/bin/badvpn-udpgw ]; then
-    echo "[*] Memulai BadVPN udpgw di /usr/local/bin (Port 7300)..."
-    /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 500 --max-connections-for-client 20 &
-elif [ -f ./badvpn-udpgw ]; then
-    echo "[*] Memulai BadVPN udpgw di direktori lokal (Port 7300)..."
-    chmod +x ./badvpn-udpgw
-    ./badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 500 --max-connections-for-client 20 &
-else
-    echo "[!] Mengeksekusi BadVPN via perintah global sistem..."
-    badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 500 --max-connections-for-client 20 &>/dev/null &
+    echo "[*] Memulai BadVPN udpgw hasil compile di Port Global 7300 (Game Mode)..."
+    /usr/local/bin/badvpn-udpgw --listen-addr 0.0.0.0:7300 --max-clients 500 --max-connections-for-client 20 &
 fi
 
-# 🔥 Eksekusi Cloudflare Zero Trust Khusus untuk Port SSH 8880
+# Eksekusi Cloudflare Zero Trust Khusus untuk Port SSH 8880 (Gunakan ARGO_AUTH sesuai SC lu)
 if [ -n "$ARGO_AUTH" ]; then
     echo "[*] Menghubungkan Terowongan SSH Zero Trust ke Port 8880..."
     /usr/local/bin/cloudflared tunnel run --protocol http2 --no-tls-verify --token "$ARGO_AUTH" > /tmp/named_tunnel.log 2>&1 &
@@ -62,5 +76,5 @@ fi
 
 sleep 2
 
-echo "[*] Menjalankan Server Utama UI & Gateway Vmess di Port Publik Railway..."
+echo "[*] Menjalankan Server Utama UI & Gateway Vmess via Server.js..."
 exec node server.js
