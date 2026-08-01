@@ -13,3 +13,7 @@ pastikan kamu sudah punya akun github dan terlogin. klik logo pork di atas yg ga
 # UNTUK KONFIG SSH
 * **USER DEFAULT:** dd
 * **PASWORD DEFAULT:** dd
+* # PENTING PENGATURAN PORT
+* domain railway arahkan ke port 8081 untuk d jadikan ui
+* tcp proxy railway arahkan ke port 8881
+* port agro tunnel zerotrust arahkan ke port 8880
