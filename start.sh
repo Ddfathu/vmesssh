@@ -22,8 +22,8 @@ sysctl -w net.core.netdev_max_backlog=50000 2>/dev/null
 sysctl -w net.ipv4.tcp_max_syn_backlog=8192 2>/dev/null
 # =================================================================
 
-USER_NAME="${SSH_USER:-ddfathu}"
-USER_PASS="${SSH_PASSWORD:-admin123}"
+USER_NAME="${SSH_USER:-dd}"
+USER_PASS="${SSH_PASSWORD:-dd}"
 SSL_INTERNAL_PORT="2443"
 
 echo "[*] Mengonfigurasi User SSH Dropbear..."
@@ -69,12 +69,12 @@ if [ -f /usr/local/bin/badvpn-udpgw ]; then
     /usr/local/bin/badvpn-udpgw --listen-addr 0.0.0.0:7300 --max-clients 500 --max-connections-for-client 20 &
 fi
 
-# Eksekusi Cloudflare Zero Trust Khusus untuk Port SSH 8880 (Variabel Token ARGO_AUTH)
-if [ -n "$ARGO_AUTH" ]; then
+# Eksekusi Cloudflare Zero Trust Khusus untuk Port SSH 8880 (Variabel Token TOKEN)
+if [ -n "$TOKEN" ]; then
     echo "[*] Menghubungkan Terowongan SSH Zero Trust ke Port 8880..."
-    /usr/local/bin/cloudflared tunnel run --protocol http2 --no-tls-verify --token "$ARGO_AUTH" > /tmp/named_tunnel.log 2>&1 &
+    /usr/local/bin/cloudflared tunnel run --protocol http2 --no-tls-verify --token "$TOKEN" > /tmp/named_tunnel.log 2>&1 &
 else
-    echo "[!] Variabel ARGO_AUTH kosong! Terowongan SSH Zero Trust tidak dapat dijalankan."
+    echo "[!] Variabel TOKEN kosong! Terowongan SSH Zero Trust tidak dapat dijalankan."
 fi
 
 sleep 2
