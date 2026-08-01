@@ -39,6 +39,7 @@ const LOG_PATH = path.join(FILE_PATH, "boot.log");
 const STATS_PATH = "/tmp/server_stats.json";
 const DB_PATH = "/tmp/ssh_details.json";
 
+// 🔥 MEMORY CACHE ENGINE: Menyimpan status hardware agar UI responsif & anti-blocking
 let cachedDiskUsage = "38%";
 let cachedSshOnline = "0 User";
 let cachedUserListDetails = "Semua user offline";
@@ -94,7 +95,7 @@ function getCurrentHosts() {
     
     if (process.env.RAILWAY_TCP_PROXY_DOMAIN && process.env.RAILWAY_TCP_PROXY_PORT) {
         const autoTcp = `${process.env.RAILWAY_TCP_PROXY_DOMAIN}:${process.env.RAILWAY_TCP_PROXY_PORT}`;
-        hostOutput += hostOutput ? ` dan ${autoTcp}` : `${autoTcp}`;
+        hostOutput += hostOutput ? ` dan ini (SSH SNI) ${autoTcp}` : `${autoTcp}`;
     } else if (process.env.SNI) {
         hostOutput += hostOutput ? ` dan ${process.env.SNI.replace(/https?:\/\//, '')}` : `${process.env.SNI.replace(/https?:\/\//, '')}`;
     } else if (hwInfo.railway_proxy && hwInfo.railway_proxy.trim() !== "") {
@@ -246,8 +247,8 @@ async function getMetaInfo() { try { const res = await axios.get('https://api.ip
 async function generateLinks(argoDomain) {
   const ISP = await getMetaInfo(); const nodeName = `${NAME}-${ISP}`;
   const defaultVless = readPathsFromFile('pathvless.txt', '/vless-argo')[0];
-  const defaultVmess = readPathsFromFile('pathvmess.txt', '/vmess-argo')[0];
-  const defaultTrojan = readPathsFromFile('pathtrojan.txt', '/trojan-argo')[0];
+  const defaultVmess = readPathsFromFile('pathvmess.txt', '/vless-argo')[0];
+  const defaultTrojan = readPathsFromFile('pathtrojan.txt', '/vless-argo')[0];
   const VMESS = { v: '2', ps: `${nodeName}`, add: CFIP, port: CFPORT, id: UUID, aid: '0', scy: 'auto', net: 'ws', type: 'none', host: argoDomain, path: `${defaultVmess}?ed=2560`, tls: 'tls', sni: argoDomain, alpn: '', fp: 'firefox' };
   const subTxt = `vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=${encodeURIComponent(defaultVless + '?ed=2560')}#${nodeName}\n\nvmess://${Buffer.from(JSON.stringify(VMESS)).toString('base64')}\n\ntrojan://${UUID}@${CFIP}:${CFPORT}?security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=${encodeURIComponent(defaultTrojan + '?ed=2560')}#${nodeName}`;
   subContent = Buffer.from(subTxt).toString('base64');
@@ -271,12 +272,12 @@ const server = http.createServer(async (req, res) => {
     if (pathName === '/__info') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         const defaultVless = readPathsFromFile('pathvless.txt', '/vless-argo')[0];
-        const defaultVmix = readPathsFromFile('pathvmess.txt', '/vmess-argo')[0];
+        const defaultVmess = readPathsFromFile('pathvmess.txt', '/vmess-argo')[0];
         const defaultTrojan = readPathsFromFile('pathtrojan.txt', '/trojan-argo')[0];
         return res.end(JSON.stringify({ 
             uuid: UUID, 
             domain: currentActiveDomain || "Menunggu Quick Tunnel...", 
-            paths: { vless: defaultVless, vmess: defaultVmix, trojan: defaultTrojan } 
+            paths: { vless: defaultVless, vmess: defaultVmess, trojan: defaultTrojan } 
         }));
     }
 
@@ -292,6 +293,7 @@ const server = http.createServer(async (req, res) => {
     if (pathName === '/api/stats') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         
+        // 🎯 LOGIKA SUPER FAST: Langsung ambil data dari memori cache (UI Instant & SSH Anti-Disconnect!)
         let hwInfo = { 
             cpu_model: os.cpus()[0].model, 
             ram_total: (os.totalmem()/1024/1024/1024).toFixed(2)+" GB", 
@@ -382,7 +384,7 @@ const server = http.createServer(async (req, res) => {
                     <div class="stat-card"><div class="stat-title">RAM Used / Total</div><div class="stat-value" id="ram">Loading...</div></div>
                     <div class="stat-card"><div class="stat-title">Disk Usage (/)</div><div class="stat-value" id="disk">Loading...</div></div>
                     <div class="stat-card"><div class="stat-title">Server Uptime</div><div class="stat-value" id="uptime" style="font-size:12px;">Loading...</div></div>
-                    <div class="stat-card" style="border-color: #a855f7;"><div class="stat-title" style="color:#d8b4fe;">SSH & VPN ONLINE USERS</div><div class="stat-value" id="ssh" style="font-size:14px; color:#a855f7; line-height:1.3;">👥 0 Users</div></div>
+                    <div class="stat-card" style="border-color: #a855f7;"><div class="stat-title" style="color:#d8b4fe;">SSH Online Users</div><div class="stat-value" id="ssh" style="font-size:14px; color:#a855f7; line-height:1.3;">👥 0 Users</div></div>
                 </div>
                 <div class="ssh-manager">
                     <div class="ssh-title"><span>➕ Buat Akun SSH Baru</span><span id="admin-indicator" class="admin-status-lbl">PUBLIC CREATION</span></div>
@@ -634,35 +636,29 @@ server.listen(PORT, () => {
         extractDomains();
     }, 3000);
 
-    // 🔥 LOOPING BACKGROUND WORKER: Sistem Ekstraksi IP Publik Asli via Pembacaan Log Pintu Gerbang Cloudflare
+    // 🔥 LOOPING ASYNC BACKGROUND WORKER (Penyelamat Port SSH & Akselerasi UI)
+    // Berjalan aman di latar belakang secara asinkron setiap 4 detik untuk mengisi cache data stats
     setInterval(() => {
+        // Eksekusi Disk Asinkron (Non-Blocking)
         require('child_process').exec("df -h / | awk 'NR==2 {print $5}'", (err, stdout) => {
             if (!err && stdout.trim()) cachedDiskUsage = stdout.trim();
         });
 
-        // 🎯 LOGIKA FILTER IP REALTIME: Membaca log pintu gerbang luar kontainer (.tmp/boot.log)
-        if (fs.existsSync(LOG_PATH)) {
-            require('child_process').exec(`tail -n 50 ${LOG_PATH} | grep -E "cfargotunnel.com|trycloudflare.com|connIndex" | grep -oE "([0-9]{1,3}\\.){3}[0-9]{1,3}" | grep -vE "127.0.0.1|0.0.0.0" | tail -n 1`, (err, stdout) => {
-                let ipDitemukan = stdout.trim();
-                
-                // Jika Cloudflare log menangkap IP Publik Asli User
-                if (!err && ipDitemukan) {
+        // Eksekusi Penyaringan IP Online Asinkron (Hanya Mengambil 1 Baris IP Teratas)
+        require('child_process').exec("netstat -anp 2>/dev/null | grep dropbear | grep ESTABLISHED | awk '{print $5}' | cut -d: -f1 | sort -u", (err, stdout) => {
+            if (!err && stdout.trim()) {
+                const ipLines = stdout.trim().split('\n').filter(Boolean);
+                if (ipLines.length > 0) {
                     cachedSshOnline = "1 User";
-                    cachedUserListDetails = `👤 IP Active: ${ipDitemukan}`;
+                    cachedUserListDetails = `👤 IP Active: ${ipLines[0]}`; // Filter murni baris teratas asli
                 } else {
-                    // Cadangan: Cek network stat global jika ada proxy luar
-                    require('child_process').exec("netstat -anp 2>/dev/null | grep -E 'dropbear|:8880|:8001' | grep ESTABLISHED | awk '{print $5}' | cut -d: -f1 | grep -vE '127.0.0.1|0.0.0.0|::' | sort -u | head -n 1", (errNet, stdoutNet) => {
-                        let ipNet = stdoutNet.trim();
-                        if (!errNet && ipNet) {
-                            cachedSshOnline = "1 User";
-                            cachedUserListDetails = `👤 IP Active: ${ipNet}`;
-                        } else {
-                            cachedSshOnline = "0 User";
-                            cachedUserListDetails = "Semua user offline";
-                        }
-                    });
+                    cachedSshOnline = "0 User";
+                    cachedUserListDetails = "Semua user offline";
                 }
-            });
-        }
+            } else {
+                cachedSshOnline = "0 User";
+                cachedUserListDetails = "Semua user offline";
+            }
+        });
     }, 4000);
 });
