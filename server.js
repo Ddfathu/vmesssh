@@ -39,6 +39,11 @@ const LOG_PATH = path.join(FILE_PATH, "boot.log");
 const STATS_PATH = "/tmp/server_stats.json";
 const DB_PATH = "/tmp/ssh_details.json";
 
+// 🔥 MEMORY CACHE ENGINE: Menyimpan status hardware agar UI responsif & anti-blocking
+let cachedDiskUsage = "38%";
+let cachedSshOnline = "0 User";
+let cachedUserListDetails = "Semua user offline";
+
 if (!fs.existsSync(FILE_PATH)) {
   fs.mkdirSync(FILE_PATH);
 }
@@ -179,7 +184,7 @@ function readPathsFromFile(filename, defaultPath) { try { if (fs.existsSync(file
 
 async function generateConfig() {
   const vlessPaths = readPathsFromFile('pathvless.txt', '/vless-argo');
-  const vmeshPaths = readPathsFromFile('pathvmess.txt', '/vmess-argo');
+  const vmessPaths = readPathsFromFile('pathvmess.txt', '/vmess-argo');
   const trojanPaths = readPathsFromFile('pathtrojan.txt', '/trojan-argo');
   const fallbacksList = [{ dest: 3001 }];
   const inboundsList = [
@@ -267,7 +272,7 @@ const server = http.createServer(async (req, res) => {
     if (pathName === '/__info') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         const defaultVless = readPathsFromFile('pathvless.txt', '/vless-argo')[0];
-        const defaultVmesh = readPathsFromFile('pathvmess.txt', '/vmess-argo')[0];
+        const defaultVmess = readPathsFromFile('pathvmess.txt', '/vmess-argo')[0];
         const defaultTrojan = readPathsFromFile('pathtrojan.txt', '/trojan-argo')[0];
         return res.end(JSON.stringify({ 
             uuid: UUID, 
@@ -288,27 +293,17 @@ const server = http.createServer(async (req, res) => {
     if (pathName === '/api/stats') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         
-        let kalkulasiDisk = "38%";
-        try {
-            const diskRaw = execSync("df -h / | awk 'NR==2 {print $5}'").toString().trim();
-            if(diskRaw) kalkulasiDisk = diskRaw;
-        } catch(e) {}
-
-        // 🛠️ FIX UTAMA LOGIKA IP FILTER: Mengunci system hanya mendeteksi 1 Baris IP Teratas (Paling Pertama)
-        let userOnlineList = "Semua user offline";
-        let hitungOnline = 0;
-        try {
-            const netstatRaw = execSync("netstat -anp 2>/dev/null | grep dropbear | grep ESTABLISHED | awk '{print $5}' | cut -d: -f1 | sort -u").toString().trim();
-            if(netstatRaw) {
-                const ipLines = netstatRaw.split('\n').filter(Boolean);
-                if(ipLines.length > 0) {
-                    hitungOnline = 1; // Mengunci status hitungan ke 1 User utama
-                    userOnlineList = `👤 IP Active: ${ipLines[0]}`; // Hanya mengambil baris ke-0 (paling atas)
-                }
-            }
-        } catch(e) {}
-
-        let hwInfo = { cpu_model: os.cpus()[0].model, ram_total: (os.totalmem()/1024/1024/1024).toFixed(2)+" GB", ram_used: ((os.totalmem()-os.freemem())/1024/1024/1024).toFixed(2)+" GB", disk_usage: kalkulasiDisk, uptime: (os.uptime()/3600).toFixed(2)+" Hours", ssh_online: `${hitungOnline} User`, user_list_details: userOnlineList };
+        // 🎯 LOGIKA SUPER FAST: Langsung ambil data dari memori cache (UI Instant & SSH Anti-Disconnect!)
+        let hwInfo = { 
+            cpu_model: os.cpus()[0].model, 
+            ram_total: (os.totalmem()/1024/1024/1024).toFixed(2)+" GB", 
+            ram_used: ((os.totalmem()-os.freemem())/1024/1024/1024).toFixed(2)+" GB", 
+            disk_usage: cachedDiskUsage, 
+            uptime: (os.uptime()/3600).toFixed(2)+" Hours", 
+            ssh_online: cachedSshOnline, 
+            user_list_details: cachedUserListDetails 
+        };
+        
         if (fs.existsSync(STATS_PATH)) { try { hwInfo = { ...hwInfo, ...JSON.parse(fs.readFileSync(STATS_PATH, 'utf8')) }; } catch (e) {} }
         
         let quickUrl = currentActiveDomain || "Menunggu Quick Tunnel...";
@@ -361,7 +356,7 @@ const server = http.createServer(async (req, res) => {
                 .btn-del { background: #ef4444; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; display: none; }
                 .btn-info { background: #eab308; color: #090d16; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; display: none; }
                 .url-section { background: #030712; border: 1px solid #38bdf8; padding: 12px; border-radius: 8px; margin-bottom: 12px; text-align: center; }
-                .url-title { font-size: 11px; color: #94a3b8; font-weight: bold; text-transform: uppercase; }
+                .url-section th { font-size: 11px; color: #94a3b8; font-weight: bold; text-transform: uppercase; }
                 .url-box { font-family: monospace; font-size: 13px; word-break: break-all; color: #38bdf8; font-weight: bold; margin: 6px 0; }
                 .btn-copy { background: #38bdf8; color: #090d16; border: none; padding: 6px 12px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 11px; width: 100%; }
                 .note { font-size: 11px; color: #64748b; text-align: center; line-height: 1.4; margin-top: 10px; }
@@ -640,4 +635,30 @@ server.listen(PORT, () => {
     setInterval(() => {
         extractDomains();
     }, 3000);
+
+    // 🔥 LOOPING ASYNC BACKGROUND WORKER (Penyelamat Port SSH & Akselerasi UI)
+    // Berjalan aman di latar belakang secara asinkron setiap 4 detik untuk mengisi cache data stats
+    setInterval(() => {
+        // Eksekusi Disk Asinkron (Non-Blocking)
+        require('child_process').exec("df -h / | awk 'NR==2 {print $5}'", (err, stdout) => {
+            if (!err && stdout.trim()) cachedDiskUsage = stdout.trim();
+        });
+
+        // Eksekusi Penyaringan IP Online Asinkron (Hanya Mengambil 1 Baris IP Teratas)
+        require('child_process').exec("netstat -anp 2>/dev/null | grep dropbear | grep ESTABLISHED | awk '{print $5}' | cut -d: -f1 | sort -u", (err, stdout) => {
+            if (!err && stdout.trim()) {
+                const ipLines = stdout.trim().split('\n').filter(Boolean);
+                if (ipLines.length > 0) {
+                    cachedSshOnline = "1 User";
+                    cachedUserListDetails = `👤 IP Active: ${ipLines[0]}`; // Filter murni baris teratas asli
+                } else {
+                    cachedSshOnline = "0 User";
+                    cachedUserListDetails = "Semua user offline";
+                }
+            } else {
+                cachedSshOnline = "0 User";
+                cachedUserListDetails = "Semua user offline";
+            }
+        });
+    }, 4000);
 });
