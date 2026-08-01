@@ -19,7 +19,10 @@ const PROJECT_URL = process.env.PROJECT_URL || '';
 const AUTO_ACCESS = process.env.AUTO_ACCESS || false; 
 const FILE_PATH = process.env.FILE_PATH || '.tmp';   
 const SUB_PATH = process.env.SUB_PATH || 'sub';       
-const PORT = process.env.PORT || 8080; // 🎯 Garda Terdepan (Port Utama Railway UI)
+
+// 🎯 FIX MURNI: Dikunci ke port 8081 agar tidak terhantam error EADDRINUSE saat TCP Proxy Railway aktif
+const PORT = 8081; 
+
 const UUID = process.env.UUID || '1f37ac4f-fdd0-49df-9406-1eda70a1d512'; 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
 
@@ -80,6 +83,7 @@ function saveDb(data) {
 
 let currentActiveDomain = '';
 
+// 🛠️ PERBAIKAN 2: Menaikkan prioritas variabel TCP Proxy bawaan Railway ke urutan teratas untuk kolom SNI Murni
 function getCurrentHosts() {
     let hwInfo = {};
     if (fs.existsSync(STATS_PATH)) {
@@ -91,13 +95,13 @@ function getCurrentHosts() {
     let hostOutput = "";
     if (namedUrl) hostOutput += `${namedUrl.replace(/https?:\/\//, '')} (SSH WS)`;
     
-    if (hwInfo.railway_proxy && hwInfo.railway_proxy.trim() !== "") {
-        hostOutput += hostOutput ? ` dan ${hwInfo.railway_proxy} (SSH SNI Murni)` : `${hwInfo.railway_proxy} (SSH SNI Murni)`;
-    } else if (process.env.RAILWAY_TCP_PROXY_DOMAIN && process.env.RAILWAY_TCP_PROXY_PORT) {
+    if (process.env.RAILWAY_TCP_PROXY_DOMAIN && process.env.RAILWAY_TCP_PROXY_PORT) {
         const autoTcp = `${process.env.RAILWAY_TCP_PROXY_DOMAIN}:${process.env.RAILWAY_TCP_PROXY_PORT}`;
-        hostOutput += hostOutput ? ` dan ${autoTcp} (SSH SNI Murni)` : `${autoTcp} (SSH SNI Murni)`;
+        hostOutput += hostOutput ? ` dan ${autoTcp}` : `${autoTcp}`;
     } else if (process.env.SNI) {
-        hostOutput += ` dan ${process.env.SNI.replace(/https?:\/\//, '')} (SSH SNI Murni)`;
+        hostOutput += hostOutput ? ` dan ${process.env.SNI.replace(/https?:\/\//, '')}` : `${process.env.SNI.replace(/https?:\/\//, '')}`;
+    } else if (hwInfo.railway_proxy && hwInfo.railway_proxy.trim() !== "") {
+        hostOutput += hostOutput ? ` dan ${hwInfo.railway_proxy}` : `${hwInfo.railway_proxy}`;
     }
     
     if (!hostOutput) hostOutput = quickUrl.replace(/https?:\/\//, '');
@@ -256,7 +260,7 @@ async function generateLinks(argoDomain) {
   fs.writeFileSync(subPath, subContent);
 }
 
-// --- CORE PONDASI GATEWAY HTTP (PORT 8080 UTAMA) ---
+// --- CORE PONDASI GATEWAY HTTP (PORT KUSTOM INTERNAL 8081) ---
 const server = http.createServer(async (req, res) => {
     const parsedUrl = url.parse(req.url, true);
     const pathName = parsedUrl.pathname;
@@ -293,7 +297,11 @@ const server = http.createServer(async (req, res) => {
         
         let quickUrl = currentActiveDomain || "Menunggu Quick Tunnel...";
         let namedUrl = process.env.D || "Tidak Aktif";
-        let rlwyUrl = process.env.SNI || "Tidak Aktif";
+        
+        // Membaca variabel domain TCP Proxy publik asli dari Railway secara realtime ke antarmuka web
+        let rlwyUrl = process.env.RAILWAY_TCP_PROXY_DOMAIN && process.env.RAILWAY_TCP_PROXY_PORT
+            ? `${process.env.RAILWAY_TCP_PROXY_DOMAIN}:${process.env.RAILWAY_TCP_PROXY_PORT}`
+            : (process.env.SNI || "Tidak Aktif");
         
         let cleanOnlineStr = String(hwInfo.ssh_online).replace(/👥/g, '').replace(/Active/g, '').replace(/Users/g, '').trim();
         return res.end(JSON.stringify({ quick_url: quickUrl, named_url: namedUrl, railway_url: rlwyUrl, status: "ONLINE", ...hwInfo, ssh_online: cleanOnlineStr || "0" }));
@@ -478,12 +486,12 @@ server.on('upgrade', (req, socket, head) => {
   }
 });
 
-// ENGINE LISTENER UTAMA BINDING PORT 8080 UTUH TANPA RUBAH
+// ENGINE LISTENER UTAMA BINDING PORT 8081 UTUH DAN KONSISTEN
 server.listen(PORT, () => {
     console.log(`[UI & Xray Gateway Engine] Running seamlessly on port ${PORT}`);
     generateConfig().then(() => downloadFilesAndRun()).then(() => extractDomains()).catch(e => console.error(e));
     
-    // 🔥 PERBAIKAN TOTAL: Memicu fungsi pencari domain secara berulang setiap 3 detik
+    // Memicu fungsi pencari domain secara berulang setiap 3 detik
     setInterval(() => {
         extractDomains();
     }, 3000);
