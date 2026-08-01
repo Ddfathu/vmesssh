@@ -12,14 +12,14 @@ const exec = promisify(require('child_process').exec);
 const { execSync } = require('child_process');
 
 // ========================================================
-// VARIABEL KONFIGURASI GLOBAL (RAILWAY FRIENDLY)
+// VARIABEL KONFIGURASI GLOBAL (PURE QUICK TUNNEL CORE)
 // ========================================================
 const UPLOAD_URL = process.env.UPLOAD_URL || '';      
 const PROJECT_URL = process.env.PROJECT_URL || '';    
 const AUTO_ACCESS = process.env.AUTO_ACCESS || false; 
 const FILE_PATH = process.env.FILE_PATH || '.tmp';   
 const SUB_PATH = process.env.SUB_PATH || 'sub';       
-const PORT = process.env.PORT || 8080; // 🎯 Garda Terdepan (Port Utama Railway)
+const PORT = process.env.PORT || 8080; // 🎯 Garda Terdepan (Port Utama Railway UI)
 const UUID = process.env.UUID || '1f37ac4f-fdd0-49df-9406-1eda70a1d512'; 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
 
@@ -27,15 +27,13 @@ const NEZHA_SERVER = process.env.NEZHA_SERVER || '';
 const NEZHA_PORT = process.env.NEZHA_PORT || '';            
 const NEZHA_KEY = process.env.NEZHA_KEY || '';              
 
-const ARGO_DOMAIN = process.env.ARGO_DOMAIN || '';          
-const ARGO_AUTH = process.env.ARGO_AUTH || '';              
-const ARGO_PORT = process.env.ARGO_PORT || 8001;            
+// 🎯 KUNCI PORT XRAY KUSTOM LU: Selalu lari ke Port 8001
+const ARGO_PORT = 8001;            
 
 const CFIP = process.env.CFIP || '104.18.17.214';            
 const CFPORT = process.env.CFPORT || 443;                   
 const NAME = process.env.NAME || 'ddfathu';                        
 
-// 🎯 FIX PATH SINKRON: Mengarah ke file log argo yang sebenarnya (.tmp/boot.log)
 const LOG_PATH = path.join(FILE_PATH, "boot.log"); 
 const STATS_PATH = "/tmp/server_stats.json";
 const DB_PATH = "/tmp/ssh_details.json";
@@ -224,25 +222,21 @@ async function downloadFilesAndRun() {
 
   exec(`nohup ${webPath} -c ${FILE_PATH}/config.json >/dev/null 2>&1 &`);
   
+  // 🎯 PURE QUICK TUNNEL MODE: Dipaksa membuat terowongan acak mengarah ke port internal 8001
   let args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile ${LOG_PATH} --loglevel info --url http://localhost:${ARGO_PORT}`;
-  if (ARGO_AUTH.match(/^[A-Z0-9a-z=]{120,250}$/)) args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 run --token ${ARGO_AUTH}`;
   
   exec(`nohup ${botPath} ${args} >/dev/null 2>&1 &`);
   await new Promise(r => setTimeout(r, 5000));
 }
 
-// 🎯 FIX UTAMA: Pembacaan link Quick Tunnel diarahkan secara presisi ke LOG_PATH yang valid
 async function extractDomains() {
-  if (ARGO_AUTH && ARGO_DOMAIN) { currentActiveDomain = ARGO_DOMAIN; await generateLinks(ARGO_DOMAIN); }
-  else {
-    try {
-      if(fs.existsSync(LOG_PATH)) {
-        const logContent = fs.readFileSync(LOG_PATH, 'utf-8');
-        const match = logContent.match(/https:\/\/([a-zA-Z0-9-]+\.trycloudflare\.com)/);
-        if (match) { currentActiveDomain = match[1]; await generateLinks(currentActiveDomain); }
-      }
-    } catch (e) {}
-  }
+  try {
+    if(fs.existsSync(LOG_PATH)) {
+      const logContent = fs.readFileSync(LOG_PATH, 'utf-8');
+      const match = logContent.match(/https:\/\/([a-zA-Z0-9-]+\.trycloudflare\.com)/);
+      if (match) { currentActiveDomain = match[1]; await generateLinks(currentActiveDomain); }
+    }
+  } catch (e) {}
 }
 
 async function getMetaInfo() { try { const res = await axios.get('https://api.ip.sb/geoip'); return `${res.data.country_code}-${res.data.isp}`.replace(/\s+/g, '_'); } catch(e) { return 'RailwayServer'; } }
@@ -274,10 +268,10 @@ const server = http.createServer(async (req, res) => {
 
     if (pathName === '/__info') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ uuid: UUID, domain: currentActiveDomain || ARGO_DOMAIN, paths: { vless: '/vless-argo', vmess: '/vmess-argo', trojan: '/trojan-argo' } }));
+        return res.end(JSON.stringify({ uuid: UUID, domain: currentActiveDomain, paths: { vless: '/vless-argo', vmess: '/vmess-argo', trojan: '/trojan-argo' } }));
     }
 
-    // API Panel SSH Management Temen Lu
+    // API Panel SSH Management
     if (pathName === '/api/logtunnel') {
         res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
         return res.end(fs.existsSync(LOG_PATH) ? fs.readFileSync(LOG_PATH, 'utf8') : "Log belum siap.");
