@@ -1,10 +1,11 @@
 #!/bin/bash
+# Kunci utama menembus limit socket container
 ulimit -n 65535 2>/dev/null
+ulimit -s unlimited 2>/dev/null
 
 USER_NAME="${SSH_USER:-ddfathu}"
 USER_PASS="${SSH_PASSWORD:-admin123}"
 SSL_INTERNAL_PORT="2443"
-PUBLIC_PORT="${PORT:-8080}"
 
 echo "[*] Mengonfigurasi User SSH Dropbear..."
 if ! id "$USER_NAME" &>/dev/null; then
@@ -40,23 +41,23 @@ echo "[*] Memulai WS-Proxy untuk SSH Dropbear di Port Lokal 8880..."
 export WS_PORT="8880"
 node ws-proxy.js &
 
-# Memulai BadVPN UDPGW di port 7300 untuk Game Mode
+# Eksekusi BadVPN UDPGW untuk Game Mode (Port 7300)
 if [ -f /usr/local/bin/badvpn-udpgw ]; then
-    echo "[*] Memulai BadVPN udpgw di Port Lokal 7300 (Game Mode)..."
+    echo "[*] Memulai BadVPN udpgw di Port Lokal 7300..."
     /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 500 --max-connections-for-client 20 &
 fi
 
-# Eksekusi Cloudflare Zero Trust Khusus untuk Port SSH 8880
+# Eksekusi Cloudflare Zero Trust Khusus untuk Port SSH WS (8880)
 if [ -n "$ARGO_AUTH" ]; then
     echo "[*] Menghubungkan Terowongan SSH Zero Trust ke Port 8880..."
     /usr/local/bin/cloudflared tunnel run --protocol http2 --no-tls-verify --token "$ARGO_AUTH" > /tmp/named_tunnel.log 2>&1 &
 fi
 
-# 🔥 SEKARANG HADIR KEMBALI: LOOP SUPPLIER DATA UNTUK UI PANEL 🔥
+# DATA SUPPLIER LOOP (INTELIJEN SAKTI) UNTUK TELEMETRI PANEL UI
 (
     while true; do
         CPU_MODEL=$(lscpu | grep 'Model name' | cut -d':' -f2 | sed -e 's/^[ \t]*//')
-        [ -z "$CPU_MODEL" ] && CPU_MODEL=$(grep -m1 'model name' /proc/procinfo 2>/dev/null | cut -d':' -f2 | sed -e 's/^[ \t]*//')
+        [ -z "$CPU_MODEL" ] && CPU_MODEL=$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d':' -f2 | sed -e 's/^[ \t]*//')
         [ -z "$CPU_MODEL" ] && CPU_MODEL="Railway Virtual CPU"
 
         RAM_TOTAL=$(free -h | awk '/Mem:/ {print $2}')
@@ -83,7 +84,6 @@ fi
             SSH_ONLINE="${COUNT_ONLINE} Users"
         fi
 
-        # Cek Railway TCP Proxy bawaan dashboard
         RLWY_PROXY=""
         if [ -n "$RAILWAY_TCP_PROXY_DOMAIN" ] && [ -n "$RAILWAY_TCP_PROXY_PORT" ]; then
             RLWY_PROXY="${RAILWAY_TCP_PROXY_DOMAIN}:${RAILWAY_TCP_PROXY_PORT}"
