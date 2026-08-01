@@ -4,11 +4,6 @@
 ulimit -n 65535 2>/dev/null
 ulimit -s unlimited 2>/dev/null
 
-# 🔥 PEMBASMI PROSES NYANGKUT: Paksa matiin Stunnel/Dropbear lama yang masih meluk port
-killall -9 stunnel4 dropbear badvpn-udpgw cloudflared node 2>/dev/null
-pkill -f stunnel4 2>/dev/null
-pkill -f dropbear 2>/dev/null
-
 # =================================================================
 # 🚀 ULTRA TURBO KERNEL TWEAKS (Pindahan dari Contoh ke SC Kita) 🚀
 # =================================================================
@@ -81,6 +76,12 @@ if [ -n "$ARGO_AUTH" ]; then
 else
     echo "[!] Variabel ARGO_AUTH kosong! Terowongan SSH Zero Trust tidak dapat dijalankan."
 fi
+
+sleep 2
+
+# 🔥 MASUKKAN MUX JAVASCRIPT: Menjalankan penyaring proxy di port 8881
+echo "[*] Memulai Multiplexer Jaringan via Mux.js di Port 8881..."
+node mux.js &
 
 sleep 2
 
