@@ -11,14 +11,17 @@ const exec = promisify(require('child_process').exec);
 const { execSync } = require('child_process');
 
 // ========================================================
-// VARIABEL KONFIGURASI GLOBAL (RAILWAY & DUAL-TUNNEL)
+// VARIABEL KONFIGURASI GLOBAL (ISOLASI PORT UI VS XRAY)
 // ========================================================
 const UPLOAD_URL = process.env.UPLOAD_URL || '';      
 const PROJECT_URL = process.env.PROJECT_URL || '';    
 const AUTO_ACCESS = process.env.AUTO_ACCESS || false; 
 const FILE_PATH = process.env.FILE_PATH || '.tmp';   
 const SUB_PATH = process.env.SUB_PATH || 'sub';       
-const PORT = process.env.PORT || 8080; // 🎯 Port Utama Railway untuk Web UI
+
+// Port Utama Railway khusus untuk Web UI & API Panel
+const PORT = process.env.PORT || 8080; 
+
 const UUID = process.env.UUID || '1f37ac4f-fdd0-49df-9406-1eda70a1d512'; 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
 
@@ -26,10 +29,10 @@ const NEZHA_SERVER = process.env.NEZHA_SERVER || '';
 const NEZHA_PORT = process.env.NEZHA_PORT || '';            
 const NEZHA_KEY = process.env.NEZHA_KEY || '';              
 
-// Variabel untuk Quick Tunnel Vmess/Vless/Trojan
+// 🎯 PORT XRAY dipisah ke 8005 agar tidak merusak port 8080 milik UI
 const ARGO_DOMAIN = '';          
 const ARGO_AUTH = '';              
-const ARGO_PORT = 8001; // 🎯 Xray Core diarahkan ke Port internal 8001
+const ARGO_PORT = 8005;            
 
 const CFIP = process.env.CFIP || '104.18.17.214';            
 const CFPORT = process.env.CFPORT || 443;                   
@@ -217,7 +220,7 @@ async function downloadFilesAndRun() {
 
   exec(`nohup ${webPath} -c ${FILE_PATH}/config.json >/dev/null 2>&1 &`);
   
-  // Quick Tunnel Engine khusus port 8001 (Vmess Core)
+  // Quick Tunnel Engine khusus port 8005 (Vmess Core)
   let args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile ${FILE_PATH}/boot.log --loglevel info --url http://localhost:${ARGO_PORT}`;
   exec(`nohup ${botPath} ${args} >/dev/null 2>&1 &`);
   await new Promise(r => setTimeout(r, 5000));
@@ -245,7 +248,7 @@ async function generateLinks(argoDomain) {
   fs.writeFileSync(subPath, subContent);
 }
 
-// --- HTTP ROUTER SERVICE (PORT 8080) ---
+// --- HTTP ROUTER SERVICE (PORT 8080 UTAMA) ---
 const server = http.createServer(async (req, res) => {
     const parsedUrl = url.parse(req.url, true);
     const pathName = parsedUrl.pathname;
@@ -288,7 +291,7 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ quick_url: quickUrl, named_url: namedUrl, railway_url: rlwyUrl, status: "ONLINE", ...hwInfo, ssh_online: cleanOnlineStr || "0" }));
     }
 
-    // HTML Rendering UI Panel
+    // HTML Rendering UI Panel Bawaan 100%
     if (pathName === '/' || pathName === '/index.html') {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         return res.end(`
@@ -449,38 +452,13 @@ const server = http.createServer(async (req, res) => {
     res.end("Not Found");
 });
 
-// ========================================================
-// DELAYED BOOT ENGINE & ANTI-CRASH PORT LOCKER
-// ========================================================
-let isStarting = false;
-
-server.listen(PORT, '0.0.0.0', () => {
+// 🔥 PROSES BINDING PORT SEJATI ASLI BAWAAN LU YANG REAKTIF LANGSUNG JALAN
+server.listen(PORT, () => {
     console.log(`[UI & Xray Gateway Engine] Running seamlessly on port ${PORT}`);
-    
-    if (!isStarting) {
-        isStarting = true;
-        
-        // Jeda 4 detik memberikan ruang bagi Railway untuk menyelesaikan map proxy 
-        // sehingga server HTTP utama tidak tertabrak proses eksternal Xray/Argo
-        setTimeout(() => {
-            console.log("[*] Memulai inisialisasi core background vmess/argo...");
-            generateConfig()
-                .then(() => downloadFilesAndRun())
-                .then(() => extractDomains())
-                .catch(e => console.error("[Xray Core Error]:", e));
-        }, 4000);
-    }
 });
 
-// Listener interseptor global untuk memblokir Loop Error EADDRINUSE
-server.on('error', (e) => {
-    if (e.code === 'EADDRINUSE') {
-        console.error(`[FATAL PORT BENTROK] Port ${PORT} sudah dikunci proses lain! Mengulang binding dalam 5 detik...`);
-        setTimeout(() => {
-            server.close();
-            server.listen(PORT, '0.0.0.0');
-        }, 5000);
-    } else {
-        console.error("[Network Server Error]:", e.message);
-    }
-});
+// 🔥 EKSEKUSI PENDUKUNG DI LUAR BLOCK BINDING (Mencegah Engine Terkunci saat Booting)
+generateConfig()
+    .then(() => downloadFilesAndRun())
+    .then(() => extractDomains())
+    .catch(e => console.error(e));
