@@ -288,7 +288,7 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ quick_url: quickUrl, named_url: namedUrl, railway_url: rlwyUrl, status: "ONLINE", ...hwInfo, ssh_online: cleanOnlineStr || "0" }));
     }
 
-    // HTML Rendering UI Panel Bawaan 100%
+    // HTML Rendering UI Panel
     if (pathName === '/' || pathName === '/index.html') {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         return res.end(`
@@ -449,7 +449,38 @@ const server = http.createServer(async (req, res) => {
     res.end("Not Found");
 });
 
-server.listen(PORT, () => {
-    console.log(`[UI & Gateway Engine] Running seamlessly on port ${PORT}`);
-    generateConfig().then(() => downloadFilesAndRun()).then(() => extractDomains()).catch(e => console.error(e));
+// ========================================================
+// DELAYED BOOT ENGINE & ANTI-CRASH PORT LOCKER
+// ========================================================
+let isStarting = false;
+
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`[UI & Xray Gateway Engine] Running seamlessly on port ${PORT}`);
+    
+    if (!isStarting) {
+        isStarting = true;
+        
+        // Jeda 4 detik memberikan ruang bagi Railway untuk menyelesaikan map proxy 
+        // sehingga server HTTP utama tidak tertabrak proses eksternal Xray/Argo
+        setTimeout(() => {
+            console.log("[*] Memulai inisialisasi core background vmess/argo...");
+            generateConfig()
+                .then(() => downloadFilesAndRun())
+                .then(() => extractDomains())
+                .catch(e => console.error("[Xray Core Error]:", e));
+        }, 4000);
+    }
+});
+
+// Listener interseptor global untuk memblokir Loop Error EADDRINUSE
+server.on('error', (e) => {
+    if (e.code === 'EADDRINUSE') {
+        console.error(`[FATAL PORT BENTROK] Port ${PORT} sudah dikunci proses lain! Mengulang binding dalam 5 detik...`);
+        setTimeout(() => {
+            server.close();
+            server.listen(PORT, '0.0.0.0');
+        }, 5000);
+    } else {
+        console.error("[Network Server Error]:", e.message);
+    }
 });
