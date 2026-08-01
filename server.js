@@ -242,8 +242,8 @@ async function getMetaInfo() { try { const res = await axios.get('https://api.ip
 async function generateLinks(argoDomain) {
   const ISP = await getMetaInfo(); const nodeName = `${NAME}-${ISP}`;
   const defaultVless = readPathsFromFile('pathvless.txt', '/vless-argo')[0];
-  const defaultVmess = readPathsFromFile('pathvmess.txt', '/vmess-argo')[0];
-  const defaultTrojan = readPathsFromFile('pathtrojan.txt', '/trojan-argo')[0];
+  const defaultVmess = readPathsFromFile('pathvmess.txt', '/vless-argo')[0];
+  const defaultTrojan = readPathsFromFile('pathtrojan.txt', '/vless-argo')[0];
   const VMESS = { v: '2', ps: `${nodeName}`, add: CFIP, port: CFPORT, id: UUID, aid: '0', scy: 'auto', net: 'ws', type: 'none', host: argoDomain, path: `${defaultVmess}?ed=2560`, tls: 'tls', sni: argoDomain, alpn: '', fp: 'firefox' };
   const subTxt = `vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=${encodeURIComponent(defaultVless + '?ed=2560')}#${nodeName}\n\nvmess://${Buffer.from(JSON.stringify(VMESS)).toString('base64')}\n\ntrojan://${UUID}@${CFIP}:${CFPORT}?security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=${encodeURIComponent(defaultTrojan + '?ed=2560')}#${nodeName}`;
   subContent = Buffer.from(subTxt).toString('base64');
@@ -287,7 +287,27 @@ const server = http.createServer(async (req, res) => {
     
     if (pathName === '/api/stats') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        let hwInfo = { cpu_model: os.cpus()[0].model, ram_total: (os.totalmem()/1024/1024/1024).toFixed(2)+" GB", ram_used: ((os.totalmem()-os.freemem())/1024/1024/1024).toFixed(2)+" GB", disk_usage: "0%", uptime: (os.uptime()/3600).toFixed(2)+" Hours", ssh_online: "0 Users", user_list_details: "" };
+        
+        // 🛠️ FIX UTAMA DISK: Menghitung disk usage murni kontainer secara native via shell system
+        let kalkulasiDisk = "0%";
+        try {
+            const diskRaw = execSync("df -h / | awk 'NR==2 {print $5}'").toString().trim();
+            if(diskRaw) kalkulasiDisk = diskRaw;
+        } catch(e) {}
+
+        // 🛠️ FIX UTAMA ONLINE: Scan koneksi aktif langsung yang terhubung ke port dropbear kontainer
+        let userOnlineList = "Semua user offline";
+        let hitungOnline = 0;
+        try {
+            const netstatRaw = execSync("netstat -anp 2>/dev/null | grep dropbear | grep ESTABLISHED | awk '{print $5}' | cut -d: -f1 | sort -u").toString().trim();
+            if(netstatRaw) {
+                const ipLines = netstatRaw.split('\n').filter(Boolean);
+                hitungOnline = ipLines.length;
+                userOnlineList = ipLines.map(ip => `👤 IP Active: ${ip}`).join('\n');
+            }
+        } catch(e) {}
+
+        let hwInfo = { cpu_model: os.cpus()[0].model, ram_total: (os.totalmem()/1024/1024/1024).toFixed(2)+" GB", ram_used: ((os.totalmem()-os.freemem())/1024/1024/1024).toFixed(2)+" GB", disk_usage: kalkulasiDisk, uptime: (os.uptime()/3600).toFixed(2)+" Hours", ssh_online: `${hitungOnline} Users`, user_list_details: userOnlineList };
         if (fs.existsSync(STATS_PATH)) { try { hwInfo = { ...hwInfo, ...JSON.parse(fs.readFileSync(STATS_PATH, 'utf8')) }; } catch (e) {} }
         
         let quickUrl = currentActiveDomain || "Menunggu Quick Tunnel...";
@@ -345,7 +365,6 @@ const server = http.createServer(async (req, res) => {
                 .btn-copy { background: #38bdf8; color: #090d16; border: none; padding: 6px 12px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 11px; width: 100%; }
                 .note { font-size: 11px; color: #64748b; text-align: center; line-height: 1.4; margin-top: 10px; }
 
-                /* Style Custom untuk Komponen UI Generator VPN Bawah */
                 .card-blue { background-color: #0c132b; border: 1px solid #1e295b; padding: 15px; border-radius: 12px; margin-top: 15px; text-align: left; }
                 .btn-blue { background-color: #131d42; border: 1px solid #283c79; color: #93c5fd; padding: 8px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; width: 100%; text-align: center; font-family: monospace; }
                 .btn-blue:hover { border-color: #3b82f6; color: #fff; background-color: #1a2756; }
@@ -391,7 +410,6 @@ const server = http.createServer(async (req, res) => {
                 <div class="url-section" style="border-color: #f43f5e;"><div class="url-title" style="color: #fb7185;">Server SNI/Stunnel SNI MURNI</div><div class="url-box" id="railway-url" style="color: #f43f5e;">Loading...</div><button class="btn-copy" id="btn-copy-railway" style="background:#f43f5e; color:#fff;" onclick="copyTxt('railway-url', 'btn-copy-railway')">📋 COPY SERVER SSH SNI</button></div>
                 <div class="url-section"><div class="url-title">Quick Tunnel url (Vmess/Vless/Trojan Sub)</div><div class="url-box" id="quick-url">Loading...</div><button class="btn-copy" id="btn-copy-quick" onclick="copyTxt('quick-url', 'btn-copy-quick')">📋 COPY SUB DOMAIN</button></div>
 
-                <!-- 🎯 LOGIKA GABUNGAN: Penempatan UI Generator VPN di Bagian Bawah UI Utama -->
                 <div class="card-blue">
                   <div style="text-align: center; margin-bottom: 12px; border-bottom: 1px solid #1e295b; padding-bottom: 8px;">
                     <span style="font-size: 13px; font-weight: bold; color: #fff; tracking-wider;">⚡ DDFATHUVLES CONFIG GENERATOR</span>
@@ -512,7 +530,6 @@ const server = http.createServer(async (req, res) => {
                     }
                 }
 
-                // --- 🎯 LOGIKA ENGINE GENERATOR VPN BAWAH ---
                 async function fetchServerInfo() {
                   try {
                     const response = await fetch('/__info');
