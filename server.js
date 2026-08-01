@@ -20,7 +20,6 @@ const AUTO_ACCESS = process.env.AUTO_ACCESS || false;
 const FILE_PATH = process.env.FILE_PATH || '.tmp';   
 const SUB_PATH = process.env.SUB_PATH || 'sub';       
 
-// 🎯 FIX MURNI: Dikunci ke port 8081 agar tidak terhantam error EADDRINUSE saat TCP Proxy Railway aktif
 const PORT = 8081; 
 
 const UUID = process.env.UUID || '1f37ac4f-fdd0-49df-9406-1eda70a1d512'; 
@@ -30,19 +29,16 @@ const NEZHA_SERVER = process.env.NEZHA_SERVER || '';
 const NEZHA_PORT = process.env.NEZHA_PORT || '';            
 const NEZHA_KEY = process.env.NEZHA_KEY || '';              
 
-// 🎯 KUNCI PORT XRAY KUSTOM LU: Selalu lari ke Port 8001
 const ARGO_PORT = 8001;            
 
 const CFIP = process.env.CFIP || '104.18.17.214';            
 const CFPORT = process.env.CFPORT || 443;                   
 const NAME = process.env.NAME || 'ddfathu';                        
 
-// 🛠️ PERBAIKAN 1: Menyelaraskan path log ke target ekstraksi domain (.tmp/boot.log)
 const LOG_PATH = path.join(FILE_PATH, "boot.log"); 
 const STATS_PATH = "/tmp/server_stats.json";
 const DB_PATH = "/tmp/ssh_details.json";
 
-// Membuat folder operasi jika belum ada
 if (!fs.existsSync(FILE_PATH)) {
   fs.mkdirSync(FILE_PATH);
 }
@@ -56,7 +52,6 @@ function generateRandomName() {
   return result;
 }
 
-// Konstanta Jalur Proses
 let subContent = null;
 const npmName = generateRandomName();
 const webName = generateRandomName();
@@ -70,7 +65,6 @@ let subPath = path.join(FILE_PATH, 'sub.txt');
 let listPath = path.join(FILE_PATH, 'list.txt');
 let configPath = path.join(FILE_PATH, 'config.json');
 
-// --- DATABASE & HELPER MANAGEMENT PANEL SSH ---
 function loadDb() {
     if (fs.existsSync(DB_PATH)) {
         try { return JSON.parse(fs.readFileSync(DB_PATH, 'utf8')); } catch (e) { return {}; }
@@ -83,7 +77,6 @@ function saveDb(data) {
 
 let currentActiveDomain = '';
 
-// 🛠️ PERBAIKAN 2: Pengecekan variabel TCP Proxy bawaan Railway ke urutan teratas
 function getCurrentHosts() {
     let hwInfo = {};
     if (fs.existsSync(STATS_PATH)) {
@@ -180,7 +173,6 @@ function deleteSsh(username) {
     }
 }
 
-// --- LOGIKA BACKEND VMESS/ARGO CORE ---
 function deleteNodes() { }
 function cleanupOldFiles() { try { const files = fs.readdirSync(FILE_PATH); files.forEach(file => { try { fs.unlinkSync(path.join(FILE_PATH, file)); } catch(e){} }); } catch(e){} }
 function readPathsFromFile(filename, defaultPath) { try { if (fs.existsSync(filename)) { const content = fs.readFileSync(filename, 'utf-8'); const paths = content.split('\n').map(p => p.trim()).filter(p => p.startsWith('/')); if (paths.length > 0) return paths; } } catch (e) {} return [defaultPath]; }
@@ -227,14 +219,12 @@ async function downloadFilesAndRun() {
 
   exec(`nohup ${webPath} -c ${FILE_PATH}/config.json >/dev/null 2>&1 &`);
   
-  // Pure Quick Tunnel Mode ke 8001
   let args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile ${LOG_PATH} --loglevel info --url http://localhost:${ARGO_PORT}`;
   
   exec(`nohup ${botPath} ${args} >/dev/null 2>&1 &`);
   await new Promise(r => setTimeout(r, 5000));
 }
 
-// 🎯 HAK PATEN LOOP TUNNEL: Mengekstrak domain secara realtime berulang-ulang
 async function extractDomains() {
   try {
     if(fs.existsSync(LOG_PATH)) {
@@ -260,7 +250,6 @@ async function generateLinks(argoDomain) {
   fs.writeFileSync(subPath, subContent);
 }
 
-// --- CORE PONDASI GATEWAY HTTP (PORT KUSTOM INTERNAL 8081) ---
 const server = http.createServer(async (req, res) => {
     const parsedUrl = url.parse(req.url, true);
     const pathName = parsedUrl.pathname;
@@ -275,7 +264,6 @@ const server = http.createServer(async (req, res) => {
         return res.end(subContent || (fs.existsSync(subPath) ? fs.readFileSync(subPath, 'utf-8') : 'Loading sub...'));
     }
 
-    // 🎯 OUTPUT EXTENSION UNTUK UI: Menyediakan token UUID dan domain tunnel realtime ke antarmuka web
     if (pathName === '/__info') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         const defaultVless = readPathsFromFile('pathvless.txt', '/vless-argo')[0];
@@ -288,7 +276,6 @@ const server = http.createServer(async (req, res) => {
         }));
     }
 
-    // API Panel SSH Management
     if (pathName === '/api/logtunnel') {
         res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
         return res.end(fs.existsSync(LOG_PATH) ? fs.readFileSync(LOG_PATH, 'utf8') : "Log belum siap.");
@@ -314,211 +301,302 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ quick_url: quickUrl, named_url: namedUrl, railway_url: rlwyUrl, status: "ONLINE", ...hwInfo, ssh_online: cleanOnlineStr || "0" }));
     }
 
-    // 🎯 INJEKSI MANDIRI KODE UI BARU: JetBrains Mono Blue Terminal Integrated Engine
     if (pathName === '/' || pathName === '/index.html') {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        return res.end(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ddfathuvles // SERVER GATEWAY</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap');
-    body { font-family: 'JetBrains Mono', monospace; background-color: #060919; }
-    .card-blue { background-color: #0c132b; border: 1px solid #1e295b; }
-    .btn-blue { background-color: #131d42; border: 1px solid #283c79; color: #93c5fd; }
-    .btn-blue:hover { border-color: #3b82f6; color: #fff; background-color: #1a2756; }
-    .btn-active { border-color: #60a5fa !important; color: #fff !important; background-color: #1d4ed8 !important; }
-  </style>
-</head>
-<body class="text-blue-200 min-h-screen flex flex-col justify-between p-4 max-w-md mx-auto selection:bg-blue-600 selection:text-white">
+        return res.end(`
+        <!DOCTYPE html>
+        <html lang="id">
+        <head>
+            <meta charset="UTF-8">
+            <title>⚡ PREMIUM SSH & VPN PANEL ⚡</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                * { box-sizing: border-box; margin: 0; padding: 0; }
+                body { font-family: '-apple-system', BlinkMacSystemFont, sans-serif; background: #090d16; color: #f8fafc; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 15px; flex-direction: column;}
+                .container { background: #111827; width: 100%; max-width: 500px; padding: 25px; border-radius: 16px; box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.8); border: 1px solid #1f2937; margin-bottom: 20px; }
+                .header { text-align: center; margin-bottom: 20px; position: relative; }
+                h1 { font-size: 20px; color: #38bdf8; text-transform: uppercase; letter-spacing: 1px; }
+                .dev-tag { font-size: 11px; color: #64748b; margin-top: 4px; font-weight: bold; }
+                .btn-login-trigger { position: absolute; top: 0; right: 0; background: #334155; color: #f8fafc; border: 1px solid #4b5563; padding: 4px 8px; border-radius: 6px; font-size: 10px; cursor: pointer; font-weight: bold; }
+                .status-container { text-align: center; margin-bottom: 15px; }
+                .status-badge { display: inline-block; background: #1f2937; padding: 5px 12px; border-radius: 50px; font-size: 11px; font-weight: bold; border: 1px solid #334155; }
+                .status-dot { height: 8px; width: 8px; background-color: #4ade80; border-radius: 50%; display: inline-block; margin-right: 6px; box-shadow: 0 0 8px #4ade80; }
+                .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px; }
+                .stat-card { background: #1f2937; padding: 12px; border-radius: 8px; border: 1px solid #334155; text-align: left; }
+                .stat-title { font-size: 11px; color: #94a3b8; text-transform: uppercase; }
+                .stat-value { font-size: 14px; font-weight: bold; color: #f1f5f9; margin-top: 4px; }
+                .ssh-manager { background: #1f2937; padding: 15px; border-radius: 8px; border: 1px solid #334155; margin-bottom: 20px; position: relative;}
+                .ssh-title { font-size: 13px; font-weight: bold; color: #38bdf8; text-transform: uppercase; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+                .input-group { display: flex; gap: 8px; margin-bottom: 10px; }
+                .input-ssh { background: #030712; border: 1px solid #4b5563; padding: 8px 12px; border-radius: 6px; color: #fff; font-size: 13px; width: 100%; }
+                .btn-add { background: #38bdf8; color: #090d16; border: none; padding: 8px 15px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 13px; }
+                .admin-status-lbl { font-size: 10px; font-weight: bold; color: #38bdf8; background: rgba(56, 189, 248, 0.1); padding: 2px 6px; border-radius: 4px; }
+                .result-box { display: none; background: #030712; border: 1px solid #4ade80; border-radius: 8px; padding: 12px; font-family: monospace; font-size: 12px; color: #4ade80; white-space: pre-wrap; margin-bottom: 15px; overflow-x: hidden; }
+                .btn-copy-result { display: none; background: #4ade80; color: #090d16; border: none; padding: 6px 12px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 11px; width: 100%; margin-bottom: 15px; }
+                .ssh-list { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
+                .ssh-list th { text-align: left; padding: 6px; color: #94a3b8; border-bottom: 1px solid #334155; }
+                .ssh-list td { padding: 6px; border-bottom: 1px solid #1f2937; vertical-align: middle; }
+                .btn-action-group { display: flex; gap: 4px; justify-content: flex-end; }
+                .btn-del { background: #ef4444; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; display: none; }
+                .btn-info { background: #eab308; color: #090d16; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; display: none; }
+                .url-section { background: #030712; border: 1px solid #38bdf8; padding: 12px; border-radius: 8px; margin-bottom: 12px; text-align: center; }
+                .url-title { font-size: 11px; color: #94a3b8; font-weight: bold; text-transform: uppercase; }
+                .url-box { font-family: monospace; font-size: 13px; word-break: break-all; color: #38bdf8; font-weight: bold; margin: 6px 0; }
+                .btn-copy { background: #38bdf8; color: #090d16; border: none; padding: 6px 12px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 11px; width: 100%; }
+                .note { font-size: 11px; color: #64748b; text-align: center; line-height: 1.4; margin-top: 10px; }
 
-  <main class="space-y-4 flex-grow mt-4">
-    <!-- WELCOME TEXT BANNER -->
-    <div class="text-center card-blue p-4 rounded-xl border-dashed border-blue-500">
-      <h1 class="text-lg font-bold text-white tracking-wider mb-2">⚡ DDFATHUVLES<span class="text-blue-400">.sys</span></h1>
-      <p class="text-xs text-blue-300 leading-relaxed">
-        Selamat datang di server vless vmess trojan railway ddfathu. Silahkan buat config di bawah ini yang sesuai dengan bug mu.
-      </p>
-      <div class="flex justify-center items-center gap-2 mt-3 border-t border-blue-950/50 pt-3">
-        <span class="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-        <p class="text-[11px] text-emerald-300 font-bold tracking-widest">ONLINE CLIENTS: 1 ORG</p>
-      </div>
-    </div>
+                /* Style Custom untuk Komponen UI Generator VPN Bawah */
+                .card-blue { background-color: #0c132b; border: 1px solid #1e295b; padding: 15px; border-radius: 12px; margin-top: 15px; text-align: left; }
+                .btn-blue { background-color: #131d42; border: 1px solid #283c79; color: #93c5fd; padding: 8px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; width: 100%; text-align: center; font-family: monospace; }
+                .btn-blue:hover { border-color: #3b82f6; color: #fff; background-color: #1a2756; }
+                .btn-active { border-color: #60a5fa !important; color: #fff !important; background-color: #1d4ed8 !important; }
+                .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px; }
+                .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+                .lbl-vpn { font-size: 10px; color: #38bdf8; font-weight: bold; display: block; margin-bottom: 4px; text-transform: uppercase; }
+                .border-lbl { border-left: 2px solid #38bdf8; padding-left: 6px; font-size: 11px; font-weight: bold; margin-top: 12px; font-family: monospace; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>👑 SELAMAT DATANG DI PANEL SSH/VPN RAILWAY 👑</h1>
+                    <div class="dev-tag">DYNAMIC TRIPLE-TUNNEL NODE CORE ACTIVE</div>
+                    <button class="btn-login-trigger" id="admin-login-btn" onclick="promptAdminLogin()">🔑 LOGIN ADMIN</button>
+                </div>
+                <div class="status-container"><div class="status-badge"><span class="status-dot"></span><span style="color: #4ade80">ALL TUNNELS ONLINE</span></div></div>
+                <div class="stats-grid">
+                    <div class="stat-card" style="grid-column: span 2;"><div class="stat-title">CPU Model</div><div class="stat-value" id="cpu" style="font-size:12px; color:#38bdf8;">Loading...</div></div>
+                    <div class="stat-card"><div class="stat-title">RAM Used / Total</div><div class="stat-value" id="ram">Loading...</div></div>
+                    <div class="stat-card"><div class="stat-title">Disk Usage (/)</div><div class="stat-value" id="disk">Loading...</div></div>
+                    <div class="stat-card"><div class="stat-title">Server Uptime</div><div class="stat-value" id="uptime" style="font-size:12px;">Loading...</div></div>
+                    <div class="stat-card" style="border-color: #a855f7;"><div class="stat-title" style="color:#d8b4fe;">SSH Online Users</div><div class="stat-value" id="ssh" style="font-size:14px; color:#a855f7; line-height:1.3;">👥 0 Users</div></div>
+                </div>
+                <div class="ssh-manager">
+                    <div class="ssh-title"><span>➕ Buat Akun SSH Baru</span><span id="admin-indicator" class="admin-status-lbl">PUBLIC CREATION</span></div>
+                    <div class="input-group">
+                        <input type="text" id="ssh-user" class="input-ssh" placeholder="Username...">
+                        <input type="password" id="ssh-pass" class="input-ssh" placeholder="Password...">
+                        <button class="btn-add" id="btn-add-ssh" onclick="createAccount()">ADD</button>
+                    </div>
+                    <div id="ssh-result" class="result-box"></div>
+                    <button id="btn-copy-acc" class="btn-copy-result" onclick="copyAccountText()">📋 COPY DETAIL AKUN</button>
+                    <div id="ssh-msg" style="font-size: 11px; margin-top: 5px; font-weight: bold;"></div>
+                    <div class="ssh-title" style="margin-top: 15px; border-top: 1px solid #334155; padding-top: 10px;">📋 Daftar Akun Terdaftar</div>
+                    <table class="ssh-list">
+                        <thead><tr><th>Username</th><th>Shell Path</th><th style="text-align: right;">Aksi</th></tr></thead>
+                        <tbody id="ssh-table-body"><tr><td colspan="3" style="text-align:center; color:#64748b;">Loading accounts...</td></tr></tbody>
+                    </table>
+                </div>
+                <div class="url-section" style="border-color: #a855f7;"><div class="url-title" style="color: #d8b4fe;">Server ssh aktif (zero trust domain)</div><div class="url-box" id="named-url">Loading...</div><button class="btn-copy" id="btn-copy-named" style="background:#a855f7; color:#fff;" onclick="copyTxt('named-url', 'btn-copy-named')">📋 COPY SSH SERVER</button></div>
+                <div class="url-section" style="border-color: #f43f5e;"><div class="url-title" style="color: #fb7185;">Server SNI/Stunnel SNI MURNI</div><div class="url-box" id="railway-url" style="color: #f43f5e;">Loading...</div><button class="btn-copy" id="btn-copy-railway" style="background:#f43f5e; color:#fff;" onclick="copyTxt('railway-url', 'btn-copy-railway')">📋 COPY SERVER SSH SNI</button></div>
+                <div class="url-section"><div class="url-title">Quick Tunnel url (Vmess/Vless/Trojan Sub)</div><div class="url-box" id="quick-url">Loading...</div><button class="btn-copy" id="btn-copy-quick" onclick="copyTxt('quick-url', 'btn-copy-quick')">📋 COPY SUB DOMAIN</button></div>
 
-    <!-- LIVE CONNECTED IP LIST BOX -->
-    <div class="card-blue p-3 rounded-xl">
-      <p class="text-[9px] text-blue-400 font-bold tracking-wider mb-1.5 uppercase">🌐 Active Connected IP Address</p>
-      <div class="bg-[#040610] rounded-lg p-2 border border-blue-950">
-        <div id="ip-list-area" class="text-[11px] text-blue-400/70 py-1 font-mono">● 127.0.0.1 <span class="text-emerald-400 font-bold">(You)</span></div>
-      </div>
-    </div>
+                <!-- 🎯 LOGIKA GABUNGAN: Penempatan UI Generator VPN di Bagian Bawah UI Utama -->
+                <div class="card-blue">
+                  <div style="text-align: center; margin-bottom: 12px; border-bottom: 1px solid #1e295b; padding-bottom: 8px;">
+                    <span style="font-size: 13px; font-weight: bold; color: #fff; tracking-wider;">⚡ DDFATHUVLES CONFIG GENERATOR</span>
+                  </div>
+                  <div class="grid-2">
+                    <div>
+                      <label class="lbl-vpn">UUID / PASS</label>
+                      <input id="uuidInput" type="text" value="Loading..." class="input-ssh" style="font-family: monospace;" readonly>
+                    </div>
+                    <div>
+                      <label class="lbl-vpn">HOST TUNNEL ARGO</label>
+                      <input id="hostInput" type="text" value="Loading..." class="input-ssh" style="font-family: monospace;" readonly>
+                    </div>
+                  </div>
+                  <div style="margin-bottom: 12px;">
+                    <label class="lbl-vpn">BUG HOST (SNI / CDN)</label>
+                    <input id="bugInput" type="text" value="suporte.garena.com" class="input-ssh" style="font-family: monospace;">
+                  </div>
 
-    <!-- CONFIG CONTROL BOX -->
-    <div class="card-blue p-4 rounded-xl space-y-4">
-      <div class="grid grid-cols-2 gap-2 text-xs">
-        <div>
-          <label class="text-[10px] text-blue-400 font-bold block mb-1">UUID/PASS</label>
-          <input id="uuidInput" type="text" value="Loading..." class="w-full bg-[#060917] border border-blue-900 rounded p-1.5 text-white font-mono focus:outline-none focus:border-blue-500">
-        </div>
-        <div>
-          <label class="text-[10px] text-blue-400 font-bold block mb-1">HOST DOMAIN</label>
-          <input id="hostInput" type="text" value="Loading..." class="w-full bg-[#060917] border border-blue-900 rounded p-1.5 text-white font-mono focus:outline-none focus:border-blue-500">
-        </div>
-      </div>
+                  <div class="border-lbl" style="border-color:#38bdf8; color:#93c5fd;">BUG SNI (NORMAL / STANDAR)</div>
+                  <div class="grid-3">
+                    <button onclick="buildConfig('vless', 'sni', event)" class="btn-blue">VLESS STD</button>
+                    <button onclick="buildConfig('vmess', 'sni', event)" class="btn-blue">VMESS STD</button>
+                    <button onclick="buildConfig('trojan', 'sni', event)" class="btn-blue">TROJAN STD</button>
+                  </div>
 
-      <!-- KOLOM INPUT BUG HOST -->
-      <div>
-        <label class="text-[10px] text-blue-400 font-bold block mb-1">BUG HOST (SNI / CDN)</label>
-        <input id="bugInput" type="text" value="suporte.garena.com" class="w-full bg-[#060917] border border-blue-900 rounded p-1.5 text-white font-mono focus:outline-none focus:border-blue-500">
-      </div>
+                  <div class="border-lbl" style="border-color:#eab308; color:#fde047;">BUG SNI (REVERSE / GAMBAR 2)</div>
+                  <div class="grid-3">
+                    <button onclick="buildConfig('vless', 'sni_reverse', event)" class="btn-blue" style="color:#fde047;">VLESS REV</button>
+                    <button onclick="buildConfig('vmess', 'sni_reverse', event)" class="btn-blue" style="color:#fde047;">VMESS REV</button>
+                    <button onclick="buildConfig('trojan', 'sni_reverse', event)" class="btn-blue" style="color:#fde047;">TROJAN REV</button>
+                  </div>
 
-      <!-- KATEGORI 1: NORMAL BUG SNI -->
-      <div class="space-y-2">
-        <div class="border-l-2 border-blue-500 pl-2">
-          <p class="text-[11px] font-bold text-blue-200 tracking-wider">BUG SNI (NORMAL / STANDAR)</p>
-        </div>
-        <div class="grid grid-cols-3 gap-2">
-          <button onclick="buildConfig('vless', 'sni')" class="btn-blue py-2 rounded-lg text-xs font-bold tracking-widest transition-all">VLESS STD</button>
-          <button onclick="buildConfig('vmess', 'sni')" class="btn-blue py-2 rounded-lg text-xs font-bold tracking-widest transition-all">VMESS STD</button>
-          <button onclick="buildConfig('trojan', 'sni')" class="btn-blue py-2 rounded-lg text-xs font-bold tracking-widest transition-all">TROJAN STD</button>
-        </div>
-      </div>
+                  <div class="border-lbl" style="border-color:#6366f1; color:#c7d2fe;">BUG CDN (WEBSOCKET PROXY)</div>
+                  <div class="grid-3">
+                    <button onclick="buildConfig('vless', 'cdn', event)" class="btn-blue">VLESS</button>
+                    <button onclick="buildConfig('vmess', 'cdn', event)" class="btn-blue">VMESS</button>
+                    <button onclick="buildConfig('trojan', 'cdn', event)" class="btn-blue">TROJAN</button>
+                  </div>
 
-      <!-- KATEGORI 2: REVERSE BUG SNI -->
-      <div class="space-y-2">
-        <div class="border-l-2 border-amber-500 pl-2">
-          <p class="text-[11px] font-bold text-amber-200 tracking-wider">BUG SNI (REVERSE / GAMBAR 2 STYLE)</p>
-        </div>
-        <div class="grid grid-cols-3 gap-2">
-          <button onclick="buildConfig('vless', 'sni_reverse')" class="btn-blue py-2 rounded-lg text-xs font-bold tracking-widest transition-all text-amber-300 border-amber-950">VLESS REV</button>
-          <button onclick="buildConfig('vmess', 'sni_reverse')" class="btn-blue py-2 rounded-lg text-xs font-bold tracking-widest transition-all text-amber-300 border-amber-950">VMESS REV</button>
-          <button onclick="buildConfig('trojan', 'sni_reverse')" class="btn-blue py-2 rounded-lg text-xs font-bold tracking-widest transition-all text-amber-300 border-amber-950">TROJAN REV</button>
-        </div>
-      </div>
+                  <div id="output-area" class="result-box" style="margin-top: 15px; border-color: #38bdf8; display: none;">
+                    <div style="display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 6px; font-size: 11px;">
+                      <span id="out-type" style="color: #38bdf8;">CONFIG</span>
+                      <span onclick="copyOutConfig()" style="color: #4ade80; cursor: pointer; text-decoration: underline;">[COPY]</span>
+                    </div>
+                    <p id="configText" style="word-break: break-all; color: #fff; max-h: 100px; overflow-y: auto; font-family: monospace;"></p>
+                  </div>
+                </div>
 
-      <!-- KATEGORI 3: CDN WEBSOCKET WS -->
-      <div class="space-y-2">
-        <div class="border-l-2 border-indigo-500 pl-2">
-          <p class="text-[11px] font-bold text-indigo-200 tracking-wider">BUG CDN (WEBSOCKET PROXY)</p>
-        </div>
-        <div class="grid grid-cols-3 gap-2">
-          <button onclick="buildConfig('vless', 'cdn')" class="btn-blue py-2 rounded-lg text-xs font-bold tracking-widest transition-all">VLESS</button>
-          <button onclick="buildConfig('vmess', 'cdn')" class="btn-blue py-2 rounded-lg text-xs font-bold tracking-widest transition-all">VMESS</button>
-          <button onclick="buildConfig('trojan', 'cdn')" class="btn-blue py-2 rounded-lg text-xs font-bold tracking-widest transition-all">TROJAN</button>
-        </div>
-      </div>
+                <p class="note">Dual terowongan berjalan sinkron terpisah.<br>Node.js Core Engine Rendering System.</p>
+            </div>
+            <script>
+                let adminToken = localStorage.getItem("admin_session_token") || "";
+                let savedUsersData = []; 
+                function checkAdminUI() {
+                    let indicator = document.getElementById('admin-indicator'); let loginBtn = document.getElementById('admin-login-btn');
+                    if(adminToken) {
+                        indicator.innerText = "ADMIN ROUTE"; indicator.style.color = "#4ade80"; indicator.style.background = "rgba(74, 222, 128, 0.1)"; loginBtn.innerText = "🔒 LOGOUT";
+                        document.querySelectorAll('.btn-del').forEach(b => b.style.display = "inline-block"); document.querySelectorAll('.btn-info').forEach(b => b.style.display = "inline-block");
+                    } else {
+                        indicator.innerText = "PUBLIC CREATION"; indicator.style.color = "#38bdf8"; indicator.style.background = "rgba(56, 189, 248, 0.1)"; loginBtn.innerText = "🔑 LOGIN ADMIN";
+                        document.querySelectorAll('.btn-del').forEach(b => b.style.display = "none"); document.querySelectorAll('.btn-info').forEach(b => b.style.display = "none");
+                    }
+                }
+                async function promptAdminLogin() {
+                    if(adminToken) { localStorage.removeItem("admin_session_token"); adminToken = ""; checkAdminUI(); fetchAccounts(); return; }
+                    let pass = prompt("Masukkan Password Admin:"); if(!pass) return;
+                    try {
+                        let res = await fetch('/api/login?pass='+pass); let data = await res.json();
+                        if(data.status === "success") { adminToken = data.token; localStorage.setItem("admin_session_token", adminToken); checkAdminUI(); fetchAccounts(); } else { alert(data.message); }
+                    } catch(e) { alert("Gagal terhubung"); }
+                }
+                async function updateStats() {
+                    try {
+                        let res = await fetch('/api/stats'); let data = await res.json();
+                        document.getElementById('cpu').innerText = data.cpu_model; document.getElementById('ram').innerText = data.ram_used + " / " + data.ram_total; document.getElementById('disk').innerText = data.disk_usage; document.getElementById('uptime').innerText = data.uptime;
+                        let detailActiveList = data.user_list_details || "Semua user offline";
+                        document.getElementById('ssh').innerHTML = "👥 " + data.ssh_online + " Users Active<br><span style='font-size:11px; font-weight:normal; color:#d8b4fe; display:block; margin-top:5px; white-space:pre-line;'>" + detailActiveList + "</span>";
+                        document.getElementById('named-url').innerText = data.named_url; document.getElementById('railway-url').innerText = data.railway_url; document.getElementById('quick-url').innerText = data.quick_url;
+                    } catch(e) {}
+                }
+                async function fetchAccounts() {
+                    try {
+                        let res = await fetch('/api/list'); let data = await res.json(); let tbody = document.getElementById('ssh-table-body'); tbody.innerHTML = "";
+                        if(data.status === "success" && data.users.length > 0) {
+                            savedUsersData = data.users; 
+                            data.users.forEach(u => {
+                                tbody.innerHTML += '<tr><td style="font-weight:bold; color:#f1f5f9;">👤 '+u.username+'</td><td style="color:#64748b;">'+u.shell+'</td><td style="text-align: right;"><div class="btn-action-group"><button class="btn-info" onclick="showAccountDetails(\\''+u.username+'\\')">👁️ INFO</button><button class="btn-del" onclick="deleteAccount(\\''+u.username+'\\')">HAPUS</button></div></td></tr>';
+                            });
+                            checkAdminUI();
+                        } else { tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#64748b;">Belum ada akun SSH kustom</td></tr>'; }
+                    } catch(e) {}
+                }
+                function showAccountDetails(username) { let userObj = savedUsersData.find(u => u.username === username); if(userObj) { alert("🕵️ DATA RAHASIA PEMBUAT AKUN:\\n===============================\\n👤 Username   : " + userObj.username + "\\n🔑 Password   : " + userObj.password + "\\n🌐 IP Address : " + userObj.ip + "\\n📱 User-Agent : " + userObj.user_agent); } }
+                async function createAccount() {
+                    let user = document.getElementById('ssh-user').value.trim(); let pass = document.getElementById('ssh-pass').value.trim(); let msg = document.getElementById('ssh-msg'); let resBox = document.getElementById('ssh-result'); let copyBtn = document.getElementById('btn-copy-acc');
+                    if(!user || !pass) { msg.style.color = "#ef4444"; msg.innerText = "Isi username & password dulu!"; return; }
+                    try {
+                        let res = await fetch('/api/add?user='+user+'&pass='+pass); let data = await res.json();
+                        if(data.status === "success") { msg.innerText = ""; resBox.innerText = data.message; resBox.style.display = "block"; copyBtn.style.display = "block"; document.getElementById('ssh-user').value = ""; document.getElementById('ssh-pass').value = ""; fetchAccounts(); } else { msg.style.color = "#ef4444"; msg.innerText = data.message; resBox.style.display = "none"; copyBtn.style.display = "none"; }
+                    } catch(e) { msg.innerText = "Gagal memproses API"; }
+                }
+                function copyAccountText() { let txt = document.getElementById('ssh-result').innerText; navigator.clipboard.writeText(txt); let btn = document.getElementById('btn-copy-acc'); btn.innerText = "✅ STRUK AKUN BERHASIL DICOPY!"; btn.style.background = "#1f2937"; btn.style.color = "#4ade80"; setTimeout(() => { btn.innerText = "📋 COPY DETAIL AKUN"; btn.style.background = "#4ade80"; btn.style.color = "#090d16"; }, 1500); }
+                async function deleteAccount(username) {
+                    if(!adminToken) { alert("Aksi Ilegal! Lu harus Login Admin dulu Bos!"); return; }
+                    if(confirm("Hapus akun SSH "+username+"?")) {
+                        try {
+                            let res = await fetch('/api/delete?user='+username+'&token='+adminToken); let data = await res.json();
+                            if(data.status === "success") { fetchAccounts(); } else { alert(data.message); }
+                        } catch(e) {}
+                    }
+                }
+                function copyTxt(elementId, btnId) {
+                    let urlText = document.getElementById(elementId).innerText;
+                    if(!urlText.includes("Menunggu") && !urlText.includes("Tidak Aktif")) {
+                        navigator.clipboard.writeText(urlText); let btn = document.getElementById(btnId); let oldText = btn.innerText; btn.innerText = "✅ COPIED!"; btn.style.background = "#4ade80"; btn.style.color = "#090d16";
+                        setTimeout(() => { btn.innerText = oldText; if (elementId === 'named-url') { btn.style.background = '#a855f7'; btn.style.color = '#fff'; } else if (elementId === 'railway-url') { btn.style.background = '#f43f5e'; btn.style.color = '#fff'; } else { btn.style.background = '#38bdf8'; btn.style.color = '#090d16'; } }, 1500);
+                    }
+                }
 
-      <!-- AREA OUTPUT CONFIG -->
-      <div id="output-area" class="hidden space-y-1.5 bg-[#040610] p-3 rounded-lg border border-blue-950">
-        <div class="flex justify-between items-center">
-          <span id="out-type" class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-500 text-white">VLESS</span>
-          <button onclick="copyOutConfig()" class="text-[10px] text-blue-400 font-bold hover:underline">COPY</button>
-        </div>
-        <p id="configText" class="text-[11px] font-mono text-blue-100 break-all bg-black/40 p-2 rounded border border-blue-950 max-h-24 overflow-y-auto">Loading...</p>
-      </div>
-    </div>
-  </main>
+                // --- 🎯 LOGIKA ENGINE GENERATOR VPN BAWAH ---
+                async function fetchServerInfo() {
+                  try {
+                    const response = await fetch('/__info');
+                    if (!response.ok) return;
+                    const data = await response.json();
+                    if (data.uuid) document.getElementById('uuidInput').value = data.uuid;
+                    if (data.domain) document.getElementById('hostInput').value = data.domain;
+                    window.serverActivePaths = data.paths;
+                  } catch (e) {}
+                }
 
-  <footer class="text-center text-[10px] text-blue-500 mt-6">&copy; 2026 DDFATHUVLES BLUE TERMINAL.</footer>
+                function buildConfig(protocol, type, evt) {
+                  document.querySelectorAll('.btn-blue').forEach(b => b.classList.remove('btn-active'));
+                  if(evt && evt.target) evt.target.classList.add('btn-active');
+                  
+                  const uuid = document.getElementById('uuidInput').value.trim();
+                  const host = document.getElementById('hostInput').value.trim(); 
+                  const bugHost = document.getElementById('bugInput').value.trim(); 
+                  const area = document.getElementById('output-area');
+                  const label = document.getElementById('out-type');
+                  const txt = document.getElementById('configText');
 
-  <script>
-    async function fetchServerInfo() {
-      try {
-        const response = await fetch('/__info');
-        if (!response.ok) return;
-        const data = await response.json();
-        
-        if (data.uuid) document.getElementById('uuidInput').value = data.uuid;
-        if (data.domain) document.getElementById('hostInput').value = data.domain;
-        if (data.paths) window.serverActivePaths = data.paths;
-      } catch (e) {
-        console.error("Gagal sinkronisasi data dari backend server.");
-      }
-    }
+                  const pathsMapping = window.serverActivePaths || { vless: '/vless-argo', vmess: '/vmess-argo', trojan: '/trojan-argo' };
+                  let basePath = pathsMapping[protocol] || '/' + protocol + '-argo';
+                  
+                  let remark = 'DDFATHU-' + protocol.toUpperCase() + '-' + type.toUpperCase();
+                  let configResult = '';
+                  label.innerText = remark;
 
-    fetchServerInfo();
+                  if (type === 'sni') {
+                    if (protocol === 'vless') {
+                      configResult = 'vless://' + uuid + '@' + bugHost + ':443?encryption=none&security=tls&sni=' + host + '&fp=randomized&type=ws&host=' + host + '&path=' + encodeURIComponent(basePath) + '#' + encodeURIComponent(remark);
+                    } else if (protocol === 'vmess') {
+                      let jsonVmess = { v: "2", ps: remark, add: bugHost, port: "443", id: uuid, aid: "0", scy: "auto", net: "ws", type: "none", host: host, path: basePath, tls: "tls", sni: host };
+                      configResult = 'vmess://' + btoa(JSON.stringify(jsonVmess));
+                    } else if (protocol === 'trojan') {
+                      configResult = 'trojan://' + uuid + '@' + bugHost + ':443?security=tls&sni=' + host + '&type=ws&host=' + host + '&path=' + encodeURIComponent(basePath) + '#' + encodeURIComponent(remark);
+                    }
+                  } 
+                  else if (type === 'sni_reverse') {
+                    if (protocol === 'vless') {
+                      configResult = 'vless://' + uuid + '@' + host + ':443?encryption=none&security=tls&sni=' + bugHost + '&fp=randomized&type=ws&host=' + bugHost + '&path=' + encodeURIComponent(basePath) + '#' + encodeURIComponent(remark);
+                    } else if (protocol === 'vmess') {
+                      let jsonVmess = { v: "2", ps: remark, add: host, port: "443", id: uuid, aid: "0", scy: "auto", net: "ws", type: "none", host: bugHost, path: basePath, tls: "tls", sni: bugHost };
+                      configResult = 'vmess://' + btoa(JSON.stringify(jsonVmess));
+                    } else if (protocol === 'trojan') {
+                      configResult = 'trojan://' + uuid + '@' + host + ':443?security=tls&sni=' + bugHost + '&type=ws&host=' + bugHost + '&path=' + encodeURIComponent(basePath) + '#' + encodeURIComponent(remark);
+                    }
+                  } 
+                  else if (type === 'cdn') {
+                    let pathBug = '/' + bugHost + basePath;
+                    if (protocol === 'vless') {
+                      configResult = 'vless://' + uuid + '@' + host + ':443?encryption=none&security=tls&sni=' + host + '&fp=randomized&type=ws&host=' + host + '&path=' + encodeURIComponent(pathBug) + '#' + encodeURIComponent(remark);
+                    } else if (protocol === 'vmess') {
+                      let jsonVmess = { v: "2", ps: remark, add: host, port: "443", id: uuid, aid: "0", scy: "none", net: "ws", type: "none", host: host, path: pathBug, tls: "tls", sni: host };
+                      configResult = 'vmess://' + btoa(JSON.stringify(jsonVmess));
+                    } else if (protocol === 'trojan') {
+                      configResult = 'trojan://' + uuid + '@' + host + ':443?security=tls&sni=' + host + '&type=ws&host=' + host + '&path=' + encodeURIComponent(pathBug) + '#' + encodeURIComponent(remark);
+                    }
+                  }
 
-    try {
-      fetch('https://api.ip.sb/geoip')
-        .then(res => res.json())
-        .then(data => {
-          if(data.ip) {
-            document.getElementById('ip-list-area').innerHTML = \`● \` + data.ip + \` <span class="text-emerald-400 font-bold">(You)</span>\`;
-          }
-        }).catch(e => {});
-    } catch(e) {}
+                  txt.innerText = configResult;
+                  area.style.display = 'block';
+                }
 
-    function buildConfig(protocol, type) {
-      document.querySelectorAll('button').forEach(b => b.classList.remove('btn-active'));
-      if(event && event.target) event.target.classList.add('btn-active');
-      
-      const uuid = document.getElementById('uuidInput').value.trim();
-      const host = document.getElementById('hostInput').value.trim(); 
-      const bugHost = document.getElementById('bugInput').value.trim(); 
-      const area = document.getElementById('output-area');
-      const label = document.getElementById('out-type');
-      const txt = document.getElementById('configText');
+                function copyOutConfig() {
+                  navigator.clipboard.writeText(document.getElementById('configText').innerText);
+                  alert('Config Berhasil Disalin!');
+                }
 
-      const pathsMapping = window.serverActivePaths || { vless: '/vless-argo', vmess: '/vmess-argo', trojan: '/trojan-argo' };
-      let basePath = pathsMapping[protocol] || '/' + protocol + '-argo';
-      
-      let remark = 'DDFATHU-' + protocol.toUpperCase() + '-' + type.toUpperCase();
-      let configResult = '';
-      label.innerText = remark;
-
-      if (type === 'sni') {
-        if (protocol === 'vless') {
-          configResult = 'vless://' + uuid + '@' + bugHost + ':443?encryption=none&security=tls&sni=' + host + '&fp=randomized&type=ws&host=' + host + '&path=' + encodeURIComponent(basePath) + '#' + encodeURIComponent(remark);
-        } else if (protocol === 'vmess') {
-          let jsonVmess = { v: "2", ps: remark, add: bugHost, port: "443", id: uuid, aid: "0", scy: "auto", net: "ws", type: "none", host: host, path: basePath, tls: "tls", sni: host };
-          configResult = 'vmess://' + btoa(JSON.stringify(jsonVmess));
-        } else if (protocol === 'trojan') {
-          configResult = 'trojan://' + uuid + '@' + bugHost + ':443?security=tls&sni=' + host + '&type=ws&host=' + host + '&path=' + encodeURIComponent(basePath) + '#' + encodeURIComponent(remark);
-        }
-      } 
-      else if (type === 'sni_reverse') {
-        if (protocol === 'vless') {
-          configResult = 'vless://' + uuid + '@' + host + ':443?encryption=none&security=tls&sni=' + bugHost + '&fp=randomized&type=ws&host=' + bugHost + '&path=' + encodeURIComponent(basePath) + '#' + encodeURIComponent(remark);
-        } else if (protocol === 'vmess') {
-          let jsonVmess = { v: "2", ps: remark, add: host, port: "443", id: uuid, aid: "0", scy: "auto", net: "ws", type: "none", host: bugHost, path: basePath, tls: "tls", sni: bugHost };
-          configResult = 'vmess://' + btoa(JSON.stringify(jsonVmess));
-        } else if (protocol === 'trojan') {
-          configResult = 'trojan://' + uuid + '@' + host + ':443?security=tls&sni=' + bugHost + '&type=ws&host=' + bugHost + '&path=' + encodeURIComponent(basePath) + '#' + encodeURIComponent(remark);
-        }
-      } 
-      else if (type === 'cdn') {
-        let pathBug = '/' + bugHost + basePath;
-        if (protocol === 'vless') {
-          configResult = 'vless://' + uuid + '@' + host + ':443?encryption=none&security=tls&sni=' + host + '&fp=randomized&type=ws&host=' + host + '&path=' + encodeURIComponent(pathBug) + '#' + encodeURIComponent(remark);
-        } else if (protocol === 'vmess') {
-          let jsonVmess = { v: "2", ps: remark, add: host, port: "443", id: uuid, aid: "0", scy: "none", net: "ws", type: "none", host: host, path: pathBug, tls: "tls", sni: host };
-          configResult = 'vmess://' + btoa(JSON.stringify(jsonVmess));
-        } else if (protocol === 'trojan') {
-          configResult = 'trojan://' + uuid + '@' + host + ':443?security=tls&sni=' + host + '&type=ws&host=' + host + '&path=' + encodeURIComponent(pathBug) + '#' + encodeURIComponent(remark);
-        }
-      }
-
-      txt.innerText = configResult;
-      area.classList.remove('hidden');
-    }
-
-    function copyOutConfig() {
-      navigator.clipboard.writeText(document.getElementById('configText').innerText);
-      alert('Config Berhasil Disalin!');
-    }
-  </script>
-</body>
-</html>`);
+                setInterval(updateStats, 2000); 
+                updateStats(); 
+                fetchAccounts();
+                fetchServerInfo();
+            </script>
+        </body>
+        </html>
+        `);
     }
 
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end("Not Found");
 });
 
-// UPGRADE LISTENER UNTUK PATH SPECIAL /SSH-WS PIPING
 server.on('upgrade', (req, socket, head) => {
   const urlPath = req.url.split('?')[0];
   if (urlPath === '/ssh-ws') {
@@ -537,12 +615,10 @@ server.on('upgrade', (req, socket, head) => {
   }
 });
 
-// ENGINE LISTENER UTAMA BINDING PORT 8081 UTUH DAN KONSISTEN
 server.listen(PORT, () => {
     console.log(`[UI & Xray Gateway Engine] Running seamlessly on port ${PORT}`);
     generateConfig().then(() => downloadFilesAndRun()).then(() => extractDomains()).catch(e => console.error(e));
     
-    // Memicu fungsi pencari domain secara berulang setiap 3 detik
     setInterval(() => {
         extractDomains();
     }, 3000);
