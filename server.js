@@ -222,19 +222,23 @@ async function downloadFilesAndRun() {
 
   exec(`nohup ${webPath} -c ${FILE_PATH}/config.json >/dev/null 2>&1 &`);
   
-  // 🎯 PURE QUICK TUNNEL MODE: Dipaksa membuat terowongan acak mengarah ke port internal 8001
+  // Pure Quick Tunnel Mode ke 8001
   let args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile ${LOG_PATH} --loglevel info --url http://localhost:${ARGO_PORT}`;
   
   exec(`nohup ${botPath} ${args} >/dev/null 2>&1 &`);
   await new Promise(r => setTimeout(r, 5000));
 }
 
+// 🎯 HAK PATEN LOOP TUNNEL: Mengekstrak domain secara realtime berulang-ulang
 async function extractDomains() {
   try {
     if(fs.existsSync(LOG_PATH)) {
       const logContent = fs.readFileSync(LOG_PATH, 'utf-8');
       const match = logContent.match(/https:\/\/([a-zA-Z0-9-]+\.trycloudflare\.com)/);
-      if (match) { currentActiveDomain = match[1]; await generateLinks(currentActiveDomain); }
+      if (match) { 
+        currentActiveDomain = match[1]; 
+        await generateLinks(currentActiveDomain); 
+      }
     }
   } catch (e) {}
 }
@@ -477,4 +481,9 @@ server.on('upgrade', (req, socket, head) => {
 server.listen(PORT, () => {
     console.log(`[UI & Xray Gateway Engine] Running seamlessly on port ${PORT}`);
     generateConfig().then(() => downloadFilesAndRun()).then(() => extractDomains()).catch(e => console.error(e));
+    
+    // 🔥 PERBAIKAN TOTAL: Memicu fungsi pencari domain secara berulang setiap 3 detik
+    setInterval(() => {
+        extractDomains();
+    }, 3000);
 });
