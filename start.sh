@@ -1,8 +1,8 @@
 #!/bin/bash
 ulimit -n 65535 2>/dev/null
 
-USER_NAME="${SSH_USER:-ddfathu}"
-USER_PASS="${SSH_PASSWORD:-admin123}"
+USER_NAME="${SSH_USER:-dd}"
+USER_PASS="${SSH_PASSWORD:-dd}"
 SSL_INTERNAL_PORT="2443"
 
 echo "[*] Mengonfigurasi User SSH Dropbear..."
@@ -39,16 +39,22 @@ echo "[*] Memulai WS-Proxy untuk SSH Dropbear di Port Lokal 8880..."
 export WS_PORT="8880"
 node ws-proxy.js &
 
-# Memulai BadVPN UDPGW di port 7300 untuk Game Mode
+# 🔥 FIX MURNI BADVPN UDPGW (ANTI GAGAL GAME MODE) 🔥
 if [ -f /usr/local/bin/badvpn-udpgw ]; then
-    echo "[*] Memulai BadVPN udpgw di Port Lokal 7300 (Game Mode)..."
+    echo "[*] Memulai BadVPN udpgw di /usr/local/bin (Port 7300)..."
     /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 500 --max-connections-for-client 20 &
+elif [ -f ./badvpn-udpgw ]; then
+    echo "[*] Memulai BadVPN udpgw di direktori lokal (Port 7300)..."
+    chmod +x ./badvpn-udpgw
+    ./badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 500 --max-connections-for-client 20 &
+else
+    echo "[!] Mengeksekusi BadVPN via perintah global sistem..."
+    badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 500 --max-connections-for-client 20 &>/dev/null &
 fi
 
-# 🔥 SEKARNG HADIR: Eksekusi Cloudflare Zero Trust Khusus untuk Port SSH 8880
+# 🔥 Eksekusi Cloudflare Zero Trust Khusus untuk Port SSH 8880
 if [ -n "$ARGO_AUTH" ]; then
     echo "[*] Menghubungkan Terowongan SSH Zero Trust ke Port 8880..."
-    # Menjalankan Named Tunnel via Token resmi dari system bin
     /usr/local/bin/cloudflared tunnel run --protocol http2 --no-tls-verify --token "$ARGO_AUTH" > /tmp/named_tunnel.log 2>&1 &
 else
     echo "[!] Variabel ARGO_AUTH kosong! Terowongan SSH Zero Trust tidak dapat dijalankan."
