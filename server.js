@@ -32,7 +32,7 @@ const NEZHA_KEY = process.env.NEZHA_KEY || '';
 const ARGO_PORT = 8001;            
 
 const CFIP = process.env.CFIP || '104.18.17.214';            
-const CFPORT = process.env.CFPORT || 443;                   
+const CFPORT = process.env.CFPORT || 443; // Murni berupa Number untuk Standard Vmess Engine                  
 const NAME = process.env.NAME || 'ddfathu';                        
 
 const LOG_PATH = path.join(FILE_PATH, "boot.log"); 
@@ -191,28 +191,25 @@ async function generateConfig() {
   const inboundsList = [];
   let nextPort = 3100;
 
-  // Daftarkan Vless WS ke Fallbacks Inbound Utama
   vlessPaths.forEach(p => { 
     const cp = nextPort++; 
     fallbacksList.push({ path: p, dest: cp }); 
     inboundsList.push({ port: cp, listen: "127.0.0.1", protocol: 'vless', settings: { clients: [{ id: UUID, level: 0 }], decryption: "none" }, streamSettings: { network: "ws", security: "none", wsSettings: { path: p } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"] } }); 
   });
 
-  // Daftarkan Vmess WS ke Fallbacks Inbound Utama
   vmessPaths.forEach(p => { 
     const cp = nextPort++; 
     fallbacksList.push({ path: p, dest: cp }); 
     inboundsList.push({ port: cp, listen: "127.0.0.1", protocol: "vmess", settings: { clients: [{ id: UUID, alterId: 0 }] }, streamSettings: { network: "ws", security: "none", wsSettings: { path: p } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"] } }); 
   });
 
-  // Daftarkan Trojan WS ke Fallbacks Inbound Utama
   trojanPaths.forEach(p => { 
     const cp = nextPort++; 
     fallbacksList.push({ path: p, dest: cp }); 
     inboundsList.push({ port: cp, listen: "127.0.0.1", protocol: "trojan", settings: { clients: [{ password: UUID }] }, streamSettings: { network: "ws", security: "none", wsSettings: { path: p } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"] } }); 
   });
 
-  // Gabungkan ke port utama (Argo port bertindak sebagai HTTP & WS Multiplexer)
+  // Argo Tunnel multiplexer gateway inbound
   inboundsList.unshift({
     port: ARGO_PORT,
     protocol: 'vless',
@@ -274,7 +271,9 @@ async function generateLinks(argoDomain) {
   const defaultVless = readPathsFromFile('pathvless.txt', '/vless-argo')[0];
   const defaultVmess = readPathsFromFile('pathvmess.txt', '/vmess-argo')[0];
   const defaultTrojan = readPathsFromFile('pathtrojan.txt', '/trojan-argo')[0];
-  const VMESS = { v: '2', ps: `${nodeName}`, add: CFIP, port: String(CFPORT), id: UUID, aid: '0', scy: 'auto', net: 'ws', type: 'none', host: argoDomain, path: `${defaultVmess}?ed=2560`, tls: 'tls', sni: argoDomain, alpn: '', fp: 'firefox' };
+  
+  // FIX: Port dikembalikan ke Integer murni (CFPORT), defaultVmess dipanggil dari file vmess yang benar!
+  const VMESS = { v: '2', ps: `${nodeName}`, add: CFIP, port: CFPORT, id: UUID, aid: '0', scy: 'auto', net: 'ws', type: 'none', host: argoDomain, path: `${defaultVmess}?ed=2560`, tls: 'tls', sni: argoDomain, alpn: '', fp: 'firefox' };
   const subTxt = `vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=${encodeURIComponent(defaultVless + '?ed=2560')}#${nodeName}\n\nvmess://${Buffer.from(JSON.stringify(VMESS)).toString('base64')}\n\ntrojan://${UUID}@${CFIP}:${CFPORT}?security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=${encodeURIComponent(defaultTrojan + '?ed=2560')}#${nodeName}`;
   subContent = Buffer.from(subTxt).toString('base64');
   fs.writeFileSync(subPath, subContent);
@@ -319,7 +318,7 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         
         let hwInfo = { 
-            cpu_model: os.cpus()[0] ? os.cpus()[0].model : "Unknown", 
+            cpu_model: os.cpus()[0] ? os.cpus()[0].model : "Unknown Core", 
             ram_total: (os.totalmem()/1024/1024/1024).toFixed(2)+" GB", 
             ram_used: ((os.totalmem()-os.freemem())/1024/1024/1024).toFixed(2)+" GB", 
             disk_usage: cachedDiskUsage, 
@@ -579,7 +578,7 @@ const server = http.createServer(async (req, res) => {
                   let configResult = '';
                   label.innerText = remark;
 
-                  // Fungsi pembantu untuk base64 yang aman terhadap karakter non-ASCII/Unicode
+                  // FIX: Standard base64 generator murni penanganan Unicode string
                   function safeBtoa(str) {
                     return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, function(match, p1) {
                       return String.fromCharCode('0x' + p1);
@@ -590,7 +589,8 @@ const server = http.createServer(async (req, res) => {
                     if (protocol === 'vless') {
                       configResult = 'vless://' + uuid + '@' + bugHost + ':443?encryption=none&security=tls&sni=' + host + '&fp=randomized&type=ws&host=' + host + '&path=' + encodeURIComponent(basePath) + '#' + encodeURIComponent(remark);
                     } else if (protocol === 'vmess') {
-                      let jsonVmess = { v: "2", ps: remark, add: bugHost, port: "443", id: uuid, aid: "0", scy: "auto", net: "ws", type: "none", host: host, path: basePath, tls: "tls", sni: host };
+                      // FIX MURNI: Port WAJIB bernilai Integer (443) agar terbaca core Xray client!
+                      let jsonVmess = { v: "2", ps: remark, add: bugHost, port: 443, id: uuid, aid: 0, scy: "auto", net: "ws", type: "none", host: host, path: basePath, tls: "tls", sni: host };
                       configResult = 'vmess://' + safeBtoa(JSON.stringify(jsonVmess));
                     } else if (protocol === 'trojan') {
                       configResult = 'trojan://' + uuid + '@' + bugHost + ':443?security=tls&sni=' + host + '&type=ws&host=' + host + '&path=' + encodeURIComponent(basePath) + '#' + encodeURIComponent(remark);
@@ -600,7 +600,7 @@ const server = http.createServer(async (req, res) => {
                     if (protocol === 'vless') {
                       configResult = 'vless://' + uuid + '@' + host + ':443?encryption=none&security=tls&sni=' + bugHost + '&fp=randomized&type=ws&host=' + bugHost + '&path=' + encodeURIComponent(basePath) + '#' + encodeURIComponent(remark);
                     } else if (protocol === 'vmess') {
-                      let jsonVmess = { v: "2", ps: remark, add: host, port: "443", id: uuid, aid: "0", scy: "auto", net: "ws", type: "none", host: bugHost, path: basePath, tls: "tls", sni: bugHost };
+                      let jsonVmess = { v: "2", ps: remark, add: host, port: 443, id: uuid, aid: 0, scy: "auto", net: "ws", type: "none", host: bugHost, path: basePath, tls: "tls", sni: bugHost };
                       configResult = 'vmess://' + safeBtoa(JSON.stringify(jsonVmess));
                     } else if (protocol === 'trojan') {
                       configResult = 'trojan://' + uuid + '@' + host + ':443?security=tls&sni=' + bugHost + '&type=ws&host=' + bugHost + '&path=' + encodeURIComponent(basePath) + '#' + encodeURIComponent(remark);
@@ -611,7 +611,7 @@ const server = http.createServer(async (req, res) => {
                     if (protocol === 'vless') {
                       configResult = 'vless://' + uuid + '@' + host + ':443?encryption=none&security=tls&sni=' + host + '&fp=randomized&type=ws&host=' + host + '&path=' + encodeURIComponent(pathBug) + '#' + encodeURIComponent(remark);
                     } else if (protocol === 'vmess') {
-                      let jsonVmess = { v: "2", ps: remark, add: host, port: "443", id: uuid, aid: "0", scy: "none", net: "ws", type: "none", host: host, path: pathBug, tls: "tls", sni: host };
+                      let jsonVmess = { v: "2", ps: remark, add: host, port: 443, id: uuid, aid: 0, scy: "auto", net: "ws", type: "none", host: host, path: pathBug, tls: "tls", sni: host };
                       configResult = 'vmess://' + safeBtoa(JSON.stringify(jsonVmess));
                     } else if (protocol === 'trojan') {
                       configResult = 'trojan://' + uuid + '@' + host + ':443?security=tls&sni=' + host + '&type=ws&host=' + host + '&path=' + encodeURIComponent(pathBug) + '#' + encodeURIComponent(remark);
