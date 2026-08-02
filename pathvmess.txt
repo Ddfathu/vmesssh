@@ -1,3 +1,2 @@
 /vmess-argo
-/vmess
 /ddfathu
