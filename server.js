@@ -186,15 +186,40 @@ async function generateConfig() {
   const vlessPaths = readPathsFromFile('pathvless.txt', '/vless-argo');
   const vmessPaths = readPathsFromFile('pathvmess.txt', '/vmess-argo');
   const trojanPaths = readPathsFromFile('pathtrojan.txt', '/trojan-argo');
-  const fallbacksList = [{ dest: 3001 }];
-  const inboundsList = [
-    { port: ARGO_PORT, protocol: 'vless', settings: { clients: [{ id: UUID, flow: 'xtls-rprx-vision' }], decryption: 'none', fallbacks: fallbacksList }, streamSettings: { network: 'tcp' } },
-    { port: 3001, listen: "127.0.0.1", protocol: "vless", settings: { clients: [{ id: UUID }], decryption: "none" }, streamSettings: { network: "tcp", security: "none" } }
-  ];
+  
+  const fallbacksList = [];
+  const inboundsList = [];
   let nextPort = 3100;
-  vlessPaths.forEach(p => { const cp = nextPort++; fallbacksList.push({ path: p, dest: cp }); inboundsList.push({ port: cp, listen: "127.0.0.1", protocol: "vless", settings: { clients: [{ id: UUID, level: 0 }], decryption: "none" }, streamSettings: { network: "ws", security: "none", wsSettings: { path: p } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"] } }); });
-  vmessPaths.forEach(p => { const cp = nextPort++; fallbacksList.push({ path: p, dest: cp }); inboundsList.push({ port: cp, listen: "127.0.0.1", protocol: "vmess", settings: { clients: [{ id: UUID, alterId: 0 }] }, streamSettings: { network: "ws", wsSettings: { path: p } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"] } }); });
-  trojanPaths.forEach(p => { const cp = nextPort++; fallbacksList.push({ path: p, dest: cp }); inboundsList.push({ port: cp, listen: "127.0.0.1", protocol: "trojan", settings: { clients: [{ password: UUID }] }, streamSettings: { network: "ws", security: "none", wsSettings: { path: p } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"] } }); });
+
+  // Daftarkan Vless WS ke Fallbacks Inbound Utama
+  vlessPaths.forEach(p => { 
+    const cp = nextPort++; 
+    fallbacksList.push({ path: p, dest: cp }); 
+    inboundsList.push({ port: cp, listen: "127.0.0.1", protocol: 'vless', settings: { clients: [{ id: UUID, level: 0 }], decryption: "none" }, streamSettings: { network: "ws", security: "none", wsSettings: { path: p } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"] } }); 
+  });
+
+  // Daftarkan Vmess WS ke Fallbacks Inbound Utama
+  vmessPaths.forEach(p => { 
+    const cp = nextPort++; 
+    fallbacksList.push({ path: p, dest: cp }); 
+    inboundsList.push({ port: cp, listen: "127.0.0.1", protocol: "vmess", settings: { clients: [{ id: UUID, alterId: 0 }] }, streamSettings: { network: "ws", security: "none", wsSettings: { path: p } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"] } }); 
+  });
+
+  // Daftarkan Trojan WS ke Fallbacks Inbound Utama
+  trojanPaths.forEach(p => { 
+    const cp = nextPort++; 
+    fallbacksList.push({ path: p, dest: cp }); 
+    inboundsList.push({ port: cp, listen: "127.0.0.1", protocol: "trojan", settings: { clients: [{ password: UUID }] }, streamSettings: { network: "ws", security: "none", wsSettings: { path: p } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"] } }); 
+  });
+
+  // Gabungkan ke port utama (Argo port bertindak sebagai HTTP & WS Multiplexer)
+  inboundsList.unshift({
+    port: ARGO_PORT,
+    protocol: 'vless',
+    settings: { clients: [{ id: UUID }], decryption: 'none', fallbacks: fallbacksList },
+    streamSettings: { network: 'tcp', security: 'none' },
+    sniffing: { enabled: true, destOverride: ["http", "tls", "quic"] }
+  });
 
   const config = { log: { access: '/dev/null', error: '/dev/null', loglevel: 'none' }, inbounds: inboundsList, dns: { servers: ["https+local://8.8.8.8/dns-query"] }, outbounds: [{ protocol: "freedom", tag: "direct" }] };
   fs.writeFileSync(path.join(FILE_PATH, 'config.json'), JSON.stringify(config, null, 2));
@@ -247,9 +272,9 @@ async function getMetaInfo() { try { const res = await axios.get('https://api.ip
 async function generateLinks(argoDomain) {
   const ISP = await getMetaInfo(); const nodeName = `${NAME}-${ISP}`;
   const defaultVless = readPathsFromFile('pathvless.txt', '/vless-argo')[0];
-  const defaultVmess = readPathsFromFile('pathvmess.txt', '/vless-argo')[0];
-  const defaultTrojan = readPathsFromFile('pathtrojan.txt', '/vless-argo')[0];
-  const VMESS = { v: '2', ps: `${nodeName}`, add: CFIP, port: CFPORT, id: UUID, aid: '0', scy: 'auto', net: 'ws', type: 'none', host: argoDomain, path: `${defaultVmess}?ed=2560`, tls: 'tls', sni: argoDomain, alpn: '', fp: 'firefox' };
+  const defaultVmess = readPathsFromFile('pathvmess.txt', '/vmess-argo')[0];
+  const defaultTrojan = readPathsFromFile('pathtrojan.txt', '/trojan-argo')[0];
+  const VMESS = { v: '2', ps: `${nodeName}`, add: CFIP, port: String(CFPORT), id: UUID, aid: '0', scy: 'auto', net: 'ws', type: 'none', host: argoDomain, path: `${defaultVmess}?ed=2560`, tls: 'tls', sni: argoDomain, alpn: '', fp: 'firefox' };
   const subTxt = `vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=${encodeURIComponent(defaultVless + '?ed=2560')}#${nodeName}\n\nvmess://${Buffer.from(JSON.stringify(VMESS)).toString('base64')}\n\ntrojan://${UUID}@${CFIP}:${CFPORT}?security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=${encodeURIComponent(defaultTrojan + '?ed=2560')}#${nodeName}`;
   subContent = Buffer.from(subTxt).toString('base64');
   fs.writeFileSync(subPath, subContent);
@@ -293,9 +318,8 @@ const server = http.createServer(async (req, res) => {
     if (pathName === '/api/stats') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         
-        // 🎯 LOGIKA SUPER FAST: Langsung ambil data dari memori cache (UI Instant & SSH Anti-Disconnect!)
         let hwInfo = { 
-            cpu_model: os.cpus()[0].model, 
+            cpu_model: os.cpus()[0] ? os.cpus()[0].model : "Unknown", 
             ram_total: (os.totalmem()/1024/1024/1024).toFixed(2)+" GB", 
             ram_used: ((os.totalmem()-os.freemem())/1024/1024/1024).toFixed(2)+" GB", 
             disk_usage: cachedDiskUsage, 
@@ -555,12 +579,19 @@ const server = http.createServer(async (req, res) => {
                   let configResult = '';
                   label.innerText = remark;
 
+                  // Fungsi pembantu untuk base64 yang aman terhadap karakter non-ASCII/Unicode
+                  function safeBtoa(str) {
+                    return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, function(match, p1) {
+                      return String.fromCharCode('0x' + p1);
+                    }));
+                  }
+
                   if (type === 'sni') {
                     if (protocol === 'vless') {
                       configResult = 'vless://' + uuid + '@' + bugHost + ':443?encryption=none&security=tls&sni=' + host + '&fp=randomized&type=ws&host=' + host + '&path=' + encodeURIComponent(basePath) + '#' + encodeURIComponent(remark);
                     } else if (protocol === 'vmess') {
                       let jsonVmess = { v: "2", ps: remark, add: bugHost, port: "443", id: uuid, aid: "0", scy: "auto", net: "ws", type: "none", host: host, path: basePath, tls: "tls", sni: host };
-                      configResult = 'vmess://' + btoa(JSON.stringify(jsonVmess));
+                      configResult = 'vmess://' + safeBtoa(JSON.stringify(jsonVmess));
                     } else if (protocol === 'trojan') {
                       configResult = 'trojan://' + uuid + '@' + bugHost + ':443?security=tls&sni=' + host + '&type=ws&host=' + host + '&path=' + encodeURIComponent(basePath) + '#' + encodeURIComponent(remark);
                     }
@@ -570,7 +601,7 @@ const server = http.createServer(async (req, res) => {
                       configResult = 'vless://' + uuid + '@' + host + ':443?encryption=none&security=tls&sni=' + bugHost + '&fp=randomized&type=ws&host=' + bugHost + '&path=' + encodeURIComponent(basePath) + '#' + encodeURIComponent(remark);
                     } else if (protocol === 'vmess') {
                       let jsonVmess = { v: "2", ps: remark, add: host, port: "443", id: uuid, aid: "0", scy: "auto", net: "ws", type: "none", host: bugHost, path: basePath, tls: "tls", sni: bugHost };
-                      configResult = 'vmess://' + btoa(JSON.stringify(jsonVmess));
+                      configResult = 'vmess://' + safeBtoa(JSON.stringify(jsonVmess));
                     } else if (protocol === 'trojan') {
                       configResult = 'trojan://' + uuid + '@' + host + ':443?security=tls&sni=' + bugHost + '&type=ws&host=' + bugHost + '&path=' + encodeURIComponent(basePath) + '#' + encodeURIComponent(remark);
                     }
@@ -581,7 +612,7 @@ const server = http.createServer(async (req, res) => {
                       configResult = 'vless://' + uuid + '@' + host + ':443?encryption=none&security=tls&sni=' + host + '&fp=randomized&type=ws&host=' + host + '&path=' + encodeURIComponent(pathBug) + '#' + encodeURIComponent(remark);
                     } else if (protocol === 'vmess') {
                       let jsonVmess = { v: "2", ps: remark, add: host, port: "443", id: uuid, aid: "0", scy: "none", net: "ws", type: "none", host: host, path: pathBug, tls: "tls", sni: host };
-                      configResult = 'vmess://' + btoa(JSON.stringify(jsonVmess));
+                      configResult = 'vmess://' + safeBtoa(JSON.stringify(jsonVmess));
                     } else if (protocol === 'trojan') {
                       configResult = 'trojan://' + uuid + '@' + host + ':443?security=tls&sni=' + host + '&type=ws&host=' + host + '&path=' + encodeURIComponent(pathBug) + '#' + encodeURIComponent(remark);
                     }
@@ -637,20 +668,17 @@ server.listen(PORT, () => {
     }, 3000);
 
     // 🔥 LOOPING ASYNC BACKGROUND WORKER (Penyelamat Port SSH & Akselerasi UI)
-    // Berjalan aman di latar belakang secara asinkron setiap 4 detik untuk mengisi cache data stats
     setInterval(() => {
-        // Eksekusi Disk Asinkron (Non-Blocking)
         require('child_process').exec("df -h / | awk 'NR==2 {print $5}'", (err, stdout) => {
             if (!err && stdout.trim()) cachedDiskUsage = stdout.trim();
         });
 
-        // Eksekusi Penyaringan IP Online Asinkron (Hanya Mengambil 1 Baris IP Teratas)
         require('child_process').exec("netstat -anp 2>/dev/null | grep dropbear | grep ESTABLISHED | awk '{print $5}' | cut -d: -f1 | sort -u", (err, stdout) => {
             if (!err && stdout.trim()) {
                 const ipLines = stdout.trim().split('\n').filter(Boolean);
                 if (ipLines.length > 0) {
                     cachedSshOnline = "1 User";
-                    cachedUserListDetails = `👤 IP Active: ${ipLines[0]}`; // Filter murni baris teratas asli
+                    cachedUserListDetails = `👤 IP Active: ${ipLines[0]}`;
                 } else {
                     cachedSshOnline = "0 User";
                     cachedUserListDetails = "Semua user offline";
