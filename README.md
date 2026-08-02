@@ -1,5 +1,5 @@
 # TENTANG
-ini adalah script ssh dan X-ray vless vmess dan Trojan untuk di install di platform paas seperti railway render dan lainya yang support docker
+ini adalah script ssh dan X-ray vless vmess dan Trojan untuk di install di platform PaaS seperti railway render dan lainya yang support docker
 
 # SPESIFIKASI
 X-ray support udp ssh dropbear support udpgw ssh dropbear support payload emhaced os Ubuntu dan script node.js
