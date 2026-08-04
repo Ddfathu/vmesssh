@@ -74,48 +74,60 @@ const server = net.createServer((clientConn) => {
             clientConn.write(defaultResp);
         }
 
-        // 🔥 KEMBALI KE ALUR STEADY AWAL LU (FIXED RESISTANT)
+        // =========================================================
+        // KONEKSI DAN PENYARINGAN STRICT KE DROPBEAR
+        // =========================================================
         const sshConn = net.createConnection({ port: SSH_TARGET_PORT, host: SSH_TARGET_HOST }, () => {
             sshConn.setNoDelay(true);
 
-            let firstPacket = true;
+            let sshHandshakeDone = false;
+            let pendingBuffer = Buffer.alloc(0);
 
             // Alirkan data dari HP (Client) ke Dropbear
-            clientConn.on('data', (data) => {
-                if (firstPacket) {
-                    firstPacket = false;
-                    const dataStr = data.toString('utf8');
-                    
-                    if (dataStr.includes('PATCH') || dataStr.includes('HTTP/')) {
-                        if (dataStr.includes('SSH-')) {
-                            const idx = data.indexOf('SSH-');
-                            data = data.subarray(idx); 
-                        } else {
-                            return; 
-                        }
+            clientConn.on('data', (chunk) => {
+                // Jika handshake SSH sudah lolos bersih, teruskan stream secara langsung
+                if (sshHandshakeDone) {
+                    if (sshConn.writable) {
+                        const flush = sshConn.write(chunk);
+                        if (!flush) clientConn.pause();
                     }
+                    return;
                 }
 
-                if (sshConn.writable) {
-                    // Cek overload buffer sebelum menulis (Anti-choking manual)
-                    const flush = sshConn.write(data);
-                    if (!flush) {
-                        clientConn.pause();
+                // Gabungkan chunk ke pendingBuffer untuk dilakukan pemeriksaan
+                pendingBuffer = Buffer.concat([pendingBuffer, chunk]);
+
+                // Cari offset header SSH-
+                const sshIndex = pendingBuffer.indexOf(Buffer.from('SSH-'));
+
+                if (sshIndex !== -1) {
+                    // Potong dan buang semua noise HTTP/Enhanced payload sebelum 'SSH-'
+                    const cleanSshData = pendingBuffer.subarray(sshIndex);
+                    sshHandshakeDone = true; // Kunci status handshake
+
+                    if (sshConn.writable) {
+                        const flush = sshConn.write(cleanSshData);
+                        if (!flush) clientConn.pause();
+                    }
+                    pendingBuffer = null; // Free memory buffer penampung
+                } else {
+                    // Cegah penumpukan memory jika payload noise terlalu panjang tanpa membawa header SSH
+                    if (pendingBuffer.length > 32 * 1024) {
+                        clientConn.destroy();
+                        sshConn.destroy();
                     }
                 }
             });
 
-            // Alirkan balik dari Dropbear ke HP secara stabil
+            // Alirkan balik data dari Dropbear ke HP (Client)
             sshConn.on('data', (data) => {
                 if (clientConn.writable) {
                     const flush = clientConn.write(data);
-                    if (!flush) {
-                        sshConn.pause();
-                    }
+                    if (!flush) sshConn.pause();
                 }
             });
 
-            // Hidupkan kembali aliran jika buffer internal sudah plong
+            // Resume stream ketika buffer internal sudah mengalir lancar
             sshConn.on('drain', () => clientConn.resume());
             clientConn.on('drain', () => sshConn.resume());
         });
@@ -128,5 +140,5 @@ const server = net.createServer((clientConn) => {
 });
 
 server.listen(WS_PORT, '0.0.0.0', () => {
-    console.log(`[WS Engine JS] Fixed Resistant Active on Port ${WS_PORT}`);
+    console.log(`[WS Engine JS] Enhanced Buffer Cleaner Active on Port ${WS_PORT}`);
 });
