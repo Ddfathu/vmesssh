@@ -23,6 +23,7 @@ function parseHeaders(rawText) {
 
 const server = net.createServer((clientConn) => {
     clientConn.setNoDelay(true);
+    clientConn.setKeepAlive(true, 15000); // ⚡ Anti silent disconnect
     clientConn.readableHighWaterMark = 64 * 1024;
     clientConn.writableHighWaterMark = 64 * 1024;
 
@@ -79,13 +80,13 @@ const server = net.createServer((clientConn) => {
         // =========================================================
         const sshConn = net.createConnection({ port: SSH_TARGET_PORT, host: SSH_TARGET_HOST }, () => {
             sshConn.setNoDelay(true);
+            sshConn.setKeepAlive(true, 15000); // ⚡ KeepAlive ke Dropbear
 
             let sshHandshakeDone = false;
             let pendingBuffer = Buffer.alloc(0);
 
             // Alirkan data dari HP (Client) ke Dropbear
             clientConn.on('data', (chunk) => {
-                // Jika handshake SSH sudah lolos bersih, teruskan stream secara langsung
                 if (sshHandshakeDone) {
                     if (sshConn.writable) {
                         const flush = sshConn.write(chunk);
@@ -94,24 +95,21 @@ const server = net.createServer((clientConn) => {
                     return;
                 }
 
-                // Gabungkan chunk ke pendingBuffer untuk dilakukan pemeriksaan
                 pendingBuffer = Buffer.concat([pendingBuffer, chunk]);
 
-                // Cari offset header SSH-
                 const sshIndex = pendingBuffer.indexOf(Buffer.from('SSH-'));
 
                 if (sshIndex !== -1) {
-                    // Potong dan buang semua noise HTTP/Enhanced payload sebelum 'SSH-'
                     const cleanSshData = pendingBuffer.subarray(sshIndex);
-                    sshHandshakeDone = true; // Kunci status handshake
+                    sshHandshakeDone = true;
 
                     if (sshConn.writable) {
                         const flush = sshConn.write(cleanSshData);
                         if (!flush) clientConn.pause();
                     }
-                    pendingBuffer = null; // Free memory buffer penampung
+                    pendingBuffer = null; 
                 } else {
-                    // Cegah penumpukan memory jika payload noise terlalu panjang tanpa membawa header SSH
+                    // ⚡ Trik Tambahan: Jika ada paket sampah HTTP ekstra di pertengahan stream tanpa 'SSH-'
                     if (pendingBuffer.length > 32 * 1024) {
                         clientConn.destroy();
                         sshConn.destroy();
@@ -127,7 +125,6 @@ const server = net.createServer((clientConn) => {
                 }
             });
 
-            // Resume stream ketika buffer internal sudah mengalir lancar
             sshConn.on('drain', () => clientConn.resume());
             clientConn.on('drain', () => sshConn.resume());
         });
