@@ -716,7 +716,7 @@ const server = http.createServer(async (req, res) => {
                         
                         let ztContainer = document.getElementById('zt-container');
                         if (data.zt_domains && data.zt_domains.length > 1) {
-                            let dropdownHtml = '<select id="named-url" class="select-zt">';
+                            let dropdownHtml = '<select id="named-url" class="select-zt" onmousedown="event.stopPropagation()">';
                             data.zt_domains.forEach(item => {
                                 dropdownHtml += '<option value="' + item.domain + '">🌐 ' + item.domain + ' (Port ' + item.port + ')</option>';
                             });
@@ -852,7 +852,7 @@ const server = http.createServer(async (req, res) => {
                   alert('Config Berhasil Disalin!');
                 }
 
-                setInterval(updateStats, 2000); 
+                setInterval(updateStats, 10000); 
                 updateStats(); 
                 fetchAccounts();
                 fetchServerInfo();
