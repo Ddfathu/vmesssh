@@ -72,49 +72,36 @@ fi
 # 🔥 LOGIKA ADAPTIF PORT TUNNEL: Default ke 8880 jika variabel env ARGO_PORT tidak diisi
 TARGET_ZT_PORT="${ARGO_PORT:-8880}"
 
-# Inisialisasi awal variabel D
-D="Menghubungkan Domain..."
+# Inisialisasi awal file temp domain UI
+echo "Menghubungkan Domain..." > /tmp/domain_zt.txt
 
 # Eksekusi Cloudflare Zero Trust Khusus untuk Port Kustom (Variabel Token TOKEN)
 if [ -n "$TOKEN" ]; then
     echo "[*] Menghubungkan Terowongan SSH Zero Trust ke Port ${TARGET_ZT_PORT}..."
     /usr/local/bin/cloudflared tunnel run --protocol http2 --no-tls-verify --token "$TOKEN" --url "http://localhost:${TARGET_ZT_PORT}" > /tmp/named_tunnel.log 2>&1 &
     
-    # 🔍 LOOPING CERDAS: Menunggu log cloudflared sampai domain spesifik port target muncul
-    echo "[*] Menyadap log untuk menarik domain Zero Trust port ${TARGET_ZT_PORT}..."
-    for i in {1..15}; do
-        if [ -f /tmp/named_tunnel.log ]; then
-            # Ekstraksi domain spesifik port target menggunakan python kecil di bash
-            EXTRACTED_DOMAIN=$(python3 -c '
-import re
-try:
-    with open("/tmp/named_tunnel.log", "r") as f:
-        content = f.read()
-        matches = re.findall(r"\"hostname\":\"([^\"]+)\"[^}]*?localhost:'"${TARGET_ZT_PORT}"'\"|localhost:'"${TARGET_ZT_PORT}"'\"[^}]*?\"hostname\":\"([^\"]+)\"", content)
-        if matches:
-            for m in matches:
-                domain = m[0] or m[1]
-                if domain:
-                    print(domain)
+    # 🔍 BACKGROUND MONITOR: Menyadap log cloudflared secara terus-menerus di latar belakang sampai domainnya ketemu
+    (
+        for i in {1..35}; do
+            if [ -f /tmp/named_tunnel.log ]; then
+                # Ambil hostname dari log
+                FOUND_DOMAIN=$(grep -oP '"hostname":"\K[^"]+' /tmp/named_tunnel.log | head -n 1)
+                if [ -n "$FOUND_DOMAIN" ]; then
+                    echo "$FOUND_DOMAIN" > /tmp/domain_zt.txt
+                    echo "[🔥 SUKSES] Domain Zero Trust Tertangkap: $FOUND_DOMAIN"
                     break
-except Exception as e:
-    pass
-            ' 2>/dev/null)
-
-            if [ -n "$EXTRACTED_DOMAIN" ]; then
-                D="$EXTRACTED_DOMAIN"
-                echo "[🔥 SUKSES] Domain Zero Trust untuk Port ${TARGET_ZT_PORT} Tertangkap: $D"
-                break
+                fi
             fi
-        fi
-        sleep 1
-    done
+            sleep 2
+        done
+    ) &
 else
     echo "[!] Variabel TOKEN kosong! Terowongan SSH Zero Trust tidak dapat dijalankan."
-    D="Token Kosong"
+    echo "Token Kosong" > /tmp/domain_zt.txt
 fi
 
-# 📤 EKSPOR VARIABEL D AGAR BISA DIBACA OLEH server.js ATAU NODE.JS
+# 📤 EKSPOR VARIABEL D DARI FILE TEMP
+D=$(cat /tmp/domain_zt.txt)
 export D
 
 sleep 2
