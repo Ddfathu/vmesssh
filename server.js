@@ -72,20 +72,42 @@ function saveDb(data) {
 
 let currentActiveDomain = '';
 
-// 🔍 FUNGSI MEMBACA DOMAIN ZERO TRUST (KEBAL BACKSLASH & ESCAPED QUOTES)
-function getZeroTrustDomain() {
+// 🔍 FUNGSI MEMBACA DOMAIN KHUSUS PORT 8880 DAN 8881
+function getZeroTrustDomains() {
+    const domains = [];
     try {
         if (fs.existsSync(ZT_LOG_PATH)) {
             const logContent = fs.readFileSync(ZT_LOG_PATH, 'utf8');
-            // REGEX SAKTI: Menangkap "hostname":"domain" maupun \"hostname\":\"domain\"
-            const match = logContent.match(/(?:\\?"|")hostname(?:\\?"|")\s*:\s*(?:\\?"|")([^"\\]+)(?:\\?"|")/);
-            if (match && match[1]) {
-                return match[1].trim();
+
+            // Cari ingress config di log: "hostname":"..." ... "service":"http://localhost:PORT"
+            // Hanya kunci pada port 8880 dan 8881
+            const regexIngress = /(?:\\?"|")hostname(?:\\?"|")\s*:\s*(?:\\?"|")([^"\\]+)(?:\\?"|")[^}]*?localhost:(8880|8881)/g;
+            let match;
+            
+            while ((match = regexIngress.exec(logContent)) !== null) {
+                const domainName = match[1].trim();
+                const portNum = match[2];
+                // Mencegah duplikasi
+                if (!domains.some(d => d.domain === domainName)) {
+                    domains.push({ domain: domainName, port: portNum });
+                }
+            }
+
+            // Fallback Regex jika format JSON tersusun terbalik ("service" dulu baru "hostname")
+            if (domains.length === 0) {
+                const regexIngressReverse = /localhost:(8880|8881)[^}]*?(?:\\?"|")hostname(?:\\?"|")\s*:\s*(?:\\?"|")([^"\\]+)(?:\\?"|")/g;
+                while ((match = regexIngressReverse.exec(logContent)) !== null) {
+                    const portNum = match[1];
+                    const domainName = match[2].trim();
+                    if (!domains.some(d => d.domain === domainName)) {
+                        domains.push({ domain: domainName, port: portNum });
+                    }
+                }
             }
         }
     } catch (e) {}
-    
-    return process.env.D || "Menghubungkan Domain...";
+
+    return domains;
 }
 
 function getCurrentHosts() {
@@ -93,7 +115,8 @@ function getCurrentHosts() {
     if (fs.existsSync(STATS_PATH)) {
         try { hwInfo = JSON.parse(fs.readFileSync(STATS_PATH, 'utf8')); } catch (e) {}
     }
-    const namedUrl = getZeroTrustDomain();
+    const ztDomains = getZeroTrustDomains();
+    const namedUrl = ztDomains.length > 0 ? ztDomains[0].domain : (process.env.D || "");
     let quickUrl = currentActiveDomain || "Menunggu Quick Tunnel...";
     
     let hostOutput = "";
@@ -342,14 +365,16 @@ const server = http.createServer(async (req, res) => {
         if (fs.existsSync(STATS_PATH)) { try { hwInfo = { ...hwInfo, ...JSON.parse(fs.readFileSync(STATS_PATH, 'utf8')) }; } catch (e) {} }
         
         let quickUrl = currentActiveDomain || "Menunggu Quick Tunnel...";
-        let namedUrl = getZeroTrustDomain();
+        
+        // 🔍 BACA DAFTAR DOMAIN SPESIFIK PORT 8880 & 8881
+        let ztDomains = getZeroTrustDomains();
         
         let rlwyUrl = process.env.RAILWAY_TCP_PROXY_DOMAIN && process.env.RAILWAY_TCP_PROXY_PORT
             ? `${process.env.RAILWAY_TCP_PROXY_DOMAIN}:${process.env.RAILWAY_TCP_PROXY_PORT}`
             : (process.env.SNI || "Tidak Aktif");
         
         let cleanOnlineStr = String(hwInfo.ssh_online).replace(/👥/g, '').replace(/Active/g, '').replace(/Users/g, '').trim();
-        return res.end(JSON.stringify({ quick_url: quickUrl, named_url: namedUrl, railway_url: rlwyUrl, status: "ONLINE", ...hwInfo, ssh_online: cleanOnlineStr || "0" }));
+        return res.end(JSON.stringify({ quick_url: quickUrl, zt_domains: ztDomains, railway_url: rlwyUrl, status: "ONLINE", ...hwInfo, ssh_online: cleanOnlineStr || "0" }));
     }
 
     if (pathName === '/' || pathName === '/index.html') {
@@ -380,6 +405,7 @@ const server = http.createServer(async (req, res) => {
                 .ssh-title { font-size: 13px; font-weight: bold; color: #38bdf8; text-transform: uppercase; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
                 .input-group { display: flex; gap: 8px; margin-bottom: 10px; }
                 .input-ssh { background: #030712; border: 1px solid #4b5563; padding: 8px 12px; border-radius: 6px; color: #fff; font-size: 13px; width: 100%; }
+                .select-zt { background: #030712; border: 1px solid #a855f7; padding: 8px 12px; border-radius: 6px; color: #38bdf8; font-size: 13px; width: 100%; font-weight: bold; font-family: monospace; outline: none; margin: 6px 0; }
                 .btn-add { background: #38bdf8; color: #090d16; border: none; padding: 8px 15px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 13px; }
                 .admin-status-lbl { font-size: 10px; font-weight: bold; color: #38bdf8; background: rgba(56, 189, 248, 0.1); padding: 2px 6px; border-radius: 4px; }
                 .result-box { display: none; background: #030712; border: 1px solid #4ade80; border-radius: 8px; padding: 12px; font-family: monospace; font-size: 12px; color: #4ade80; white-wrap: pre-wrap; margin-bottom: 15px; overflow-x: hidden; }
@@ -437,7 +463,16 @@ const server = http.createServer(async (req, res) => {
                         <tbody id="ssh-table-body"><tr><td colspan="3" style="text-align:center; color:#64748b;">Loading accounts...</td></tr></tbody>
                     </table>
                 </div>
-                <div class="url-section" style="border-color: #a855f7;"><div class="url-title" style="color: #d8b4fe;">Server ssh aktif (zero trust domain)</div><div class="url-box" id="named-url">Loading...</div><button class="btn-copy" id="btn-copy-named" style="background:#a855f7; color:#fff;" onclick="copyTxt('named-url', 'btn-copy-named')">📋 COPY SSH SERVER</button></div>
+
+                <!-- 🟣 KOTAK ZERO TRUST ADAPTIF (TEKS BILA 1 DOMAIN, DROPDOWN BILA MULTI-DOMAIN) -->
+                <div class="url-section" style="border-color: #a855f7;">
+                    <div class="url-title" style="color: #d8b4fe;">Server ssh aktif (zero trust domain)</div>
+                    <div id="zt-container">
+                        <div class="url-box" id="named-url">Menghubungkan Domain...</div>
+                    </div>
+                    <button class="btn-copy" id="btn-copy-named" style="background:#a855f7; color:#fff;" onclick="copyTxt('named-url', 'btn-copy-named')">📋 COPY SSH SERVER</button>
+                </div>
+
                 <div class="url-section" style="border-color: #f43f5e;"><div class="url-title" style="color: #fb7185;">Server SNI/Stunnel SNI MURNI</div><div class="url-box" id="railway-url" style="color: #f43f5e;">Loading...</div><button class="btn-copy" id="btn-copy-railway" style="background:#f43f5e; color:#fff;" onclick="copyTxt('railway-url', 'btn-copy-railway')">📋 COPY SERVER SSH SNI</button></div>
                 <div class="url-section"><div class="url-title">Quick Tunnel url (Vmess/Vless/Trojan Sub)</div><div class="url-box" id="quick-url">Loading...</div><button class="btn-copy" id="btn-copy-quick" onclick="copyTxt('quick-url', 'btn-copy-quick')">📋 COPY SUB DOMAIN</button></div>
 
@@ -513,15 +548,36 @@ const server = http.createServer(async (req, res) => {
                         if(data.status === "success") { adminToken = data.token; localStorage.setItem("admin_session_token", adminToken); checkAdminUI(); fetchAccounts(); } else { alert(data.message); }
                     } catch(e) { alert("Gagal terhubung"); }
                 }
+                
                 async function updateStats() {
                     try {
                         let res = await fetch('/api/stats'); let data = await res.json();
                         document.getElementById('cpu').innerText = data.cpu_model; document.getElementById('ram').innerText = data.ram_used + " / " + data.ram_total; document.getElementById('disk').innerText = data.disk_usage; document.getElementById('uptime').innerText = data.uptime;
                         let detailActiveList = data.user_list_details || "Semua user offline";
                         document.getElementById('ssh').innerHTML = "👥 " + data.ssh_online + " Active<br><span style='font-size:11px; font-weight:normal; color:#d8b4fe; display:block; margin-top:5px; white-space:pre-line;'>" + detailActiveList + "</span>";
-                        document.getElementById('named-url').innerText = data.named_url; document.getElementById('railway-url').innerText = data.railway_url; document.getElementById('quick-url').innerText = data.quick_url;
+                        
+                        // LOGIKA UI MULTI-DOMAIN DROPDOWN / SINGLE DOMAIN
+                        let ztContainer = document.getElementById('zt-container');
+                        if (data.zt_domains && data.zt_domains.length > 1) {
+                            // BILA LEBIH DARI 1 DOMAIN (PORT 8880 & 8881) -> RENDER DROPDOWN
+                            let dropdownHtml = '<select id="named-url" class="select-zt">';
+                            data.zt_domains.forEach(item => {
+                                dropdownHtml += '<option value="' + item.domain + '">🌐 ' + item.domain + ' (Port ' + item.port + ')</option>';
+                            });
+                            dropdownHtml += '</select>';
+                            ztContainer.innerHTML = dropdownHtml;
+                        } else if (data.zt_domains && data.zt_domains.length === 1) {
+                            // BILA CUMA 1 DOMAIN -> RENDER TEKS BIASA
+                            ztContainer.innerHTML = '<div class="url-box" id="named-url">' + data.zt_domains[0].domain + '</div>';
+                        } else {
+                            ztContainer.innerHTML = '<div class="url-box" id="named-url">Menghubungkan Domain...</div>';
+                        }
+
+                        document.getElementById('railway-url').innerText = data.railway_url; 
+                        document.getElementById('quick-url').innerText = data.quick_url;
                     } catch(e) {}
                 }
+
                 async function fetchAccounts() {
                     try {
                         let res = await fetch('/api/list'); let data = await res.json(); let tbody = document.getElementById('ssh-table-body'); tbody.innerHTML = "";
@@ -553,8 +609,12 @@ const server = http.createServer(async (req, res) => {
                         } catch(e) {}
                     }
                 }
+                
                 function copyTxt(elementId, btnId) {
-                    let urlText = document.getElementById(elementId).innerText;
+                    let elem = document.getElementById(elementId);
+                    if(!elem) return;
+                    let urlText = elem.tagName === "SELECT" ? elem.value : elem.innerText;
+                    
                     if(!urlText.includes("Menunggu") && !urlText.includes("Tidak Aktif")) {
                         navigator.clipboard.writeText(urlText); let btn = document.getElementById(btnId); let oldText = btn.innerText; btn.innerText = "✅ COPIED!"; btn.style.background = "#4ade80"; btn.style.color = "#090d16";
                         setTimeout(() => { btn.innerText = oldText; if (elementId === 'named-url') { btn.style.background = '#a855f7'; btn.style.color = '#fff'; } else if (elementId === 'railway-url') { btn.style.background = '#f43f5e'; btn.style.color = '#fff'; } else { btn.style.background = '#38bdf8'; btn.style.color = '#090d16'; } }, 1500);
