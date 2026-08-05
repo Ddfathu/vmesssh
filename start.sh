@@ -80,12 +80,12 @@ if [ -n "$TOKEN" ]; then
     echo "[*] Menghubungkan Terowongan SSH Zero Trust ke Port ${TARGET_ZT_PORT}..."
     /usr/local/bin/cloudflared tunnel run --protocol http2 --no-tls-verify --token "$TOKEN" --url "http://localhost:${TARGET_ZT_PORT}" > /tmp/named_tunnel.log 2>&1 &
     
-    # 🔍 BACKGROUND MONITOR: Menyadap log cloudflared secara terus-menerus di latar belakang sampai domainnya ketemu
+    # 🔍 BACKGROUND MONITOR: Menyadap log cloudflared pakai SED (100% kompatibel & anti-gagal)
     (
         for i in {1..35}; do
             if [ -f /tmp/named_tunnel.log ]; then
-                # Ambil hostname dari log
-                FOUND_DOMAIN=$(grep -oP '"hostname":"\K[^"]+' /tmp/named_tunnel.log | head -n 1)
+                # Ekstrasi domain dari json log cloudflared
+                FOUND_DOMAIN=$(sed -n 's/.*"hostname":"\([^"]*\)".*/\1/p' /tmp/named_tunnel.log | head -n 1)
                 if [ -n "$FOUND_DOMAIN" ]; then
                     echo "$FOUND_DOMAIN" > /tmp/domain_zt.txt
                     echo "[🔥 SUKSES] Domain Zero Trust Tertangkap: $FOUND_DOMAIN"
@@ -100,9 +100,8 @@ else
     echo "Token Kosong" > /tmp/domain_zt.txt
 fi
 
-# 📤 EKSPOR VARIABEL D DARI FILE TEMP
-D=$(cat /tmp/domain_zt.txt)
-export D
+# 📤 EKSPOR VARIABEL D UNTUK FALLBACK
+export D="Menghubungkan Domain..."
 
 sleep 2
 
