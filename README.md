@@ -8,7 +8,6 @@ X-ray support udp ssh dropbear support udpgw ssh dropbear support payload emhace
 pastikan kamu sudah punya akun github dan terlogin. klik logo pork di atas yg gambar kayak kaki 3 lalu klik create fork stelah script Ter copy ke githubmu login ke web PAas sperti railway instal script yg udah d fork tadi stelah di instal tambahkan 2 variabel di menu variabel 
 
 1. **TOKEN** masukan nama variabel TOKEN dan value nya adalah token agro zerotrust
-2. **D** masukan nama variabel D dan isi value nya dengan url agro tunnel yg di routekan
 
 # UNTUK KONFIG SSH
 * **USER DEFAULT:** dd
