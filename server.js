@@ -72,13 +72,13 @@ function saveDb(data) {
 
 let currentActiveDomain = '';
 
-// 🔍 FUNGSI MEMBACA DOMAIN ZERO TRUST DARI LOG NAMED TUNNEL
+// 🔍 FUNGSI MEMBACA DOMAIN ZERO TRUST (KEBAL BACKSLASH & ESCAPED QUOTES)
 function getZeroTrustDomain() {
     try {
         if (fs.existsSync(ZT_LOG_PATH)) {
             const logContent = fs.readFileSync(ZT_LOG_PATH, 'utf8');
-            // Menangkap "hostname":"sgssh.dfathu.web.id"
-            const match = logContent.match(/"hostname"\s*:\s*"([^"]+)"/);
+            // REGEX SAKTI: Menangkap "hostname":"domain" maupun \"hostname\":\"domain\"
+            const match = logContent.match(/(?:\\?"|")hostname(?:\\?"|")\s*:\s*(?:\\?"|")([^"\\]+)(?:\\?"|")/);
             if (match && match[1]) {
                 return match[1].trim();
             }
@@ -307,13 +307,11 @@ const server = http.createServer(async (req, res) => {
         }));
     }
 
-    // 🟢 ENDPOINT LOG QUICK TUNNEL (Bawaan)
     if (pathName === '/api/logtunnel') {
         res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
         return res.end(fs.existsSync(LOG_PATH) ? fs.readFileSync(LOG_PATH, 'utf8') : "Log belum siap.");
     }
 
-    // 🟢 ENDPOINT BARU KHUSUS LOG ZERO TRUST / NAMED TUNNEL
     if (pathName === '/api/lognamed') {
         res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
         if (fs.existsSync(ZT_LOG_PATH)) {
@@ -344,8 +342,6 @@ const server = http.createServer(async (req, res) => {
         if (fs.existsSync(STATS_PATH)) { try { hwInfo = { ...hwInfo, ...JSON.parse(fs.readFileSync(STATS_PATH, 'utf8')) }; } catch (e) {} }
         
         let quickUrl = currentActiveDomain || "Menunggu Quick Tunnel...";
-        
-        // 🔍 BACA DOMAIN ZERO TRUST SECARA AUTOMATIS
         let namedUrl = getZeroTrustDomain();
         
         let rlwyUrl = process.env.RAILWAY_TCP_PROXY_DOMAIN && process.env.RAILWAY_TCP_PROXY_PORT
