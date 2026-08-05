@@ -12,7 +12,7 @@ const exec = promisify(require('child_process').exec);
 const { execSync } = require('child_process');
 
 // ========================================================
-// VARIABEL KONFIGURASI GLOBAL (PURE QUICK TUNNEL CORE)
+// VARIABEL KONFIGURASI GLOBAL
 // ========================================================
 const UPLOAD_URL = process.env.UPLOAD_URL || '';      
 const PROJECT_URL = process.env.PROJECT_URL || '';    
@@ -25,23 +25,17 @@ const PORT = 8081;
 const UUID = process.env.UUID || '1f37ac4f-fdd0-49df-9406-1eda70a1d512'; 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
 
-const NEZHA_SERVER = process.env.NEZHA_SERVER || '';        
-const NEZHA_PORT = process.env.NEZHA_PORT || '';            
-const NEZHA_KEY = process.env.NEZHA_KEY || '';              
-
 const ARGO_PORT = 8001;            
 
 const CFIP = process.env.CFIP || '104.18.17.214';            
-const CFPORT = process.env.CFPORT || 443; // Murni berupa Number untuk Standard Vmess Engine                  
+const CFPORT = process.env.CFPORT || 443;                  
 const NAME = process.env.NAME || 'ddfathu';                        
 
 const LOG_PATH = path.join(FILE_PATH, "boot.log"); 
+const ZT_LOG_PATH = "/tmp/named_tunnel.log";
 const STATS_PATH = "/tmp/server_stats.json";
 const DB_PATH = "/tmp/ssh_details.json";
-const ZT_DOMAIN_FILE = "/tmp/domain_zt.txt";
-const ZT_LOG_FILE = "/tmp/named_tunnel.log";
 
-// 🔥 MEMORY CACHE ENGINE: Menyimpan status hardware agar UI responsif & anti-blocking
 let cachedDiskUsage = "38%";
 let cachedSshOnline = "0 User";
 let cachedUserListDetails = "Semua user offline";
@@ -60,17 +54,11 @@ function generateRandomName() {
 }
 
 let subContent = null;
-const npmName = generateRandomName();
 const webName = generateRandomName();
 const botName = generateRandomName();
-const phpName = generateRandomName();
-let npmPath = path.join(FILE_PATH, npmName);
-let phpPath = path.join(FILE_PATH, phpName);
 let webPath = path.join(FILE_PATH, webName);
 let botPath = path.join(FILE_PATH, botName);
 let subPath = path.join(FILE_PATH, 'sub.txt');
-let listPath = path.join(FILE_PATH, 'list.txt');
-let configPath = path.join(FILE_PATH, 'config.json');
 
 function loadDb() {
     if (fs.existsSync(DB_PATH)) {
@@ -84,32 +72,19 @@ function saveDb(data) {
 
 let currentActiveDomain = '';
 
-// 🔍 FUNGSI DETEKSI REAL-TIME DOMAIN ZERO TRUST
+// 🔍 FUNGSI MEMBACA DOMAIN ZERO TRUST DARI LOG NAMED TUNNEL
 function getZeroTrustDomain() {
-    // 1. Coba baca dari file temp /tmp/domain_zt.txt
     try {
-        if (fs.existsSync(ZT_DOMAIN_FILE)) {
-            const domain = fs.readFileSync(ZT_DOMAIN_FILE, 'utf8').trim();
-            if (domain && domain !== "Menghubungkan Domain..." && domain !== "Token Kosong") {
-                return domain;
-            }
-        }
-    } catch (e) {}
-
-    // 2. Coba ekstrasi langsung dari file log cloudflared /tmp/named_tunnel.log jika ada
-    try {
-        if (fs.existsSync(ZT_LOG_FILE)) {
-            const logContent = fs.readFileSync(ZT_LOG_FILE, 'utf8');
-            const match = logContent.match(/"hostname":"([^"]+)"/);
+        if (fs.existsSync(ZT_LOG_PATH)) {
+            const logContent = fs.readFileSync(ZT_LOG_PATH, 'utf8');
+            // Menangkap "hostname":"sgssh.dfathu.web.id"
+            const match = logContent.match(/"hostname"\s*:\s*"([^"]+)"/);
             if (match && match[1]) {
-                const domain = match[1].trim();
-                try { fs.writeFileSync(ZT_DOMAIN_FILE, domain); } catch(err) {}
-                return domain;
+                return match[1].trim();
             }
         }
     } catch (e) {}
-
-    // 3. Fallback ke environment variable D atau pesan standar
+    
     return process.env.D || "Menghubungkan Domain...";
 }
 
@@ -209,8 +184,6 @@ function deleteSsh(username) {
     }
 }
 
-function deleteNodes() { }
-function cleanupOldFiles() { try { const files = fs.readdirSync(FILE_PATH); files.forEach(file => { try { fs.unlinkSync(path.join(FILE_PATH, file)); } catch(e){} }); } catch(e){} }
 function readPathsFromFile(filename, defaultPath) { try { if (fs.existsSync(filename)) { const content = fs.readFileSync(filename, 'utf-8'); const paths = content.split('\n').map(p => p.trim()).filter(p => p.startsWith('/')); if (paths.length > 0) return paths; } } catch (e) {} return [defaultPath]; }
 
 async function generateConfig() {
@@ -334,10 +307,22 @@ const server = http.createServer(async (req, res) => {
         }));
     }
 
+    // 🟢 ENDPOINT LOG QUICK TUNNEL (Bawaan)
     if (pathName === '/api/logtunnel') {
         res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
         return res.end(fs.existsSync(LOG_PATH) ? fs.readFileSync(LOG_PATH, 'utf8') : "Log belum siap.");
     }
+
+    // 🟢 ENDPOINT BARU KHUSUS LOG ZERO TRUST / NAMED TUNNEL
+    if (pathName === '/api/lognamed') {
+        res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+        if (fs.existsSync(ZT_LOG_PATH)) {
+            return res.end(fs.readFileSync(ZT_LOG_PATH, 'utf8'));
+        } else {
+            return res.end("Log Zero Trust belum terbuat atau file /tmp/named_tunnel.log tidak ditemukan.");
+        }
+    }
+
     if (pathName === '/api/add') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(addSsh(query.user, query.pass, ipAddr, userAgent))); }
     if (pathName === '/api/delete') { res.writeHead(200, { 'Content-Type': 'application/json' }); if (query.token !== ADMIN_PASSWORD) return res.end(JSON.stringify({ status: "error", message: "Akses Ditolak!" })); return res.end(JSON.stringify(deleteSsh(query.user))); }
     if (pathName === '/api/list') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(listSsh())); }
@@ -360,7 +345,7 @@ const server = http.createServer(async (req, res) => {
         
         let quickUrl = currentActiveDomain || "Menunggu Quick Tunnel...";
         
-        // 🔥 BACA DOMAIN ZERO TRUST SECARA DINAMIS DAN REAL-TIME
+        // 🔍 BACA DOMAIN ZERO TRUST SECARA AUTOMATIS
         let namedUrl = getZeroTrustDomain();
         
         let rlwyUrl = process.env.RAILWAY_TCP_PROXY_DOMAIN && process.env.RAILWAY_TCP_PROXY_PORT
@@ -696,7 +681,6 @@ server.listen(PORT, () => {
         extractDomains();
     }, 3000);
 
-    // 🔥 LOOPING ASYNC BACKGROUND WORKER (Penyelamat Port SSH & Akselerasi UI)
     setInterval(() => {
         require('child_process').exec("df -h / | awk 'NR==2 {print $5}'", (err, stdout) => {
             if (!err && stdout.trim()) cachedDiskUsage = stdout.trim();
