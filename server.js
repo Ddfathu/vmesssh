@@ -23,7 +23,6 @@ const SUB_PATH = process.env.SUB_PATH || 'sub';
 const PORT = 8081; 
 
 const UUID = process.env.UUID || '1f37ac4f-fdd0-49df-9406-1eda70a1d512'; 
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
 
 const ARGO_PORT = 8001;            
 
@@ -33,6 +32,8 @@ const NAME = process.env.NAME || 'ddfathu';
 
 const LOG_PATH = path.join(FILE_PATH, "boot.log"); 
 const ZT_LOG_PATH = "/tmp/named_tunnel.log";
+const ZT_TOKEN_FILE = "/tmp/zt_token.txt";
+const ADMIN_PASS_FILE = "/tmp/admin_pass.txt";
 const STATS_PATH = "/tmp/server_stats.json";
 const DB_PATH = "/tmp/ssh_details.json";
 
@@ -42,6 +43,22 @@ let cachedUserListDetails = "Semua user offline";
 
 if (!fs.existsSync(FILE_PATH)) {
   fs.mkdirSync(FILE_PATH);
+}
+
+// 🔍 FUNGSI BACA / VALIDASI PASSWORD ADMIN DINAMIS
+function getAdminPassword() {
+    try {
+        if (fs.existsSync(ADMIN_PASS_FILE)) {
+            return fs.readFileSync(ADMIN_PASS_FILE, 'utf8').trim();
+        }
+    } catch (e) {}
+    return process.env.ADMIN_PASSWORD || null; // Return null jika belum pernah di-setup
+}
+
+function verifyAdminPassword(passInput) {
+    const currentPass = getAdminPassword();
+    if (!currentPass) return false;
+    return currentPass === passInput;
 }
 
 function generateRandomName() {
@@ -72,6 +89,25 @@ function saveDb(data) {
 
 let currentActiveDomain = '';
 
+// 🔍 FUNGSI RESTART TUNNEL DENGAN TOKEN BARU
+function restartZeroTrustTunnel(newToken) {
+    try {
+        execSync("pkill -f 'cloudflared tunnel run' 2>/dev/null || true");
+        
+        if (newToken) {
+            fs.writeFileSync(ZT_TOKEN_FILE, newToken.trim());
+            const targetPort = process.env.ARGO_PORT || "8880";
+            exec(`nohup /usr/local/bin/cloudflared tunnel run --protocol http2 --no-tls-verify --token "${newToken.trim()}" --url "http://localhost:${targetPort}" > ${ZT_LOG_PATH} 2>&1 &`);
+        } else {
+            if (fs.existsSync(ZT_TOKEN_FILE)) fs.unlinkSync(ZT_TOKEN_FILE);
+            if (fs.existsSync(ZT_LOG_PATH)) fs.writeFileSync(ZT_LOG_PATH, "Token Dihapus.");
+        }
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
 // 🔍 FUNGSI MEMBACA DOMAIN KHUSUS PORT 8880 DAN 8881
 function getZeroTrustDomains() {
     const domains = [];
@@ -79,21 +115,17 @@ function getZeroTrustDomains() {
         if (fs.existsSync(ZT_LOG_PATH)) {
             const logContent = fs.readFileSync(ZT_LOG_PATH, 'utf8');
 
-            // Cari ingress config di log: "hostname":"..." ... "service":"http://localhost:PORT"
-            // Hanya kunci pada port 8880 dan 8881
             const regexIngress = /(?:\\?"|")hostname(?:\\?"|")\s*:\s*(?:\\?"|")([^"\\]+)(?:\\?"|")[^}]*?localhost:(8880|8881)/g;
             let match;
             
             while ((match = regexIngress.exec(logContent)) !== null) {
                 const domainName = match[1].trim();
                 const portNum = match[2];
-                // Mencegah duplikasi
                 if (!domains.some(d => d.domain === domainName)) {
                     domains.push({ domain: domainName, port: portNum });
                 }
             }
 
-            // Fallback Regex jika format JSON tersusun terbalik ("service" dulu baru "hostname")
             if (domains.length === 0) {
                 const regexIngressReverse = /localhost:(8880|8881)[^}]*?(?:\\?"|")hostname(?:\\?"|")\s*:\s*(?:\\?"|")([^"\\]+)(?:\\?"|")/g;
                 while ((match = regexIngressReverse.exec(logContent)) !== null) {
@@ -344,10 +376,61 @@ const server = http.createServer(async (req, res) => {
         }
     }
 
+    // 🔑 API SETUP & RESET PASSWORD ADMIN PERTAMA KALI
+    if (pathName === '/api/setup-pass') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        const newPass = query.pass ? query.pass.trim() : "";
+        const oldPass = query.old_pass ? query.old_pass.trim() : "";
+        const currentPass = getAdminPassword();
+
+        if (currentPass) {
+            // Jika sudah ada password, wajib sertakan old_pass yang benar
+            if (oldPass !== currentPass) {
+                return res.end(JSON.stringify({ status: "error", message: "Password Admin Lama Salah!" }));
+            }
+        }
+        
+        if (!newPass || newPass.length < 4) {
+            return res.end(JSON.stringify({ status: "error", message: "Password minimal 4 karakter!" }));
+        }
+
+        fs.writeFileSync(ADMIN_PASS_FILE, newPass);
+        return res.end(JSON.stringify({ status: "success", message: "Password Admin Berhasil Disimpan/Diubah!" }));
+    }
+
+    // 🔑 API MANAGEMENT TOKEN ZERO TRUST (KHUSUS ADMIN)
+    if (pathName === '/api/set-token') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        if (!verifyAdminPassword(query.pass)) {
+            return res.end(JSON.stringify({ status: "error", message: "Password Admin Salah / Akses Ditolak!" }));
+        }
+        const newToken = query.token ? query.token.trim() : "";
+        const success = restartZeroTrustTunnel(newToken);
+        if (success) {
+            return res.end(JSON.stringify({ status: "success", message: newToken ? "Token Zero Trust berhasil diperbarui & tunnel direstart!" : "Token Zero Trust berhasil dihapus!" }));
+        } else {
+            return res.end(JSON.stringify({ status: "error", message: "Gagal merestart tunnel." }));
+        }
+    }
+
     if (pathName === '/api/add') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(addSsh(query.user, query.pass, ipAddr, userAgent))); }
-    if (pathName === '/api/delete') { res.writeHead(200, { 'Content-Type': 'application/json' }); if (query.token !== ADMIN_PASSWORD) return res.end(JSON.stringify({ status: "error", message: "Akses Ditolak!" })); return res.end(JSON.stringify(deleteSsh(query.user))); }
+    
+    if (pathName === '/api/delete') { 
+        res.writeHead(200, { 'Content-Type': 'application/json' }); 
+        if (!verifyAdminPassword(query.token)) return res.end(JSON.stringify({ status: "error", message: "Akses Ditolak!" })); 
+        return res.end(JSON.stringify(deleteSsh(query.user))); 
+    }
+    
     if (pathName === '/api/list') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(listSsh())); }
-    if (pathName === '/api/login') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(query.pass === ADMIN_PASSWORD ? { status: "success", token: ADMIN_PASSWORD } : { status: "error", message: "Password Salah!" })); }
+    
+    if (pathName === '/api/login') { 
+        res.writeHead(200, { 'Content-Type': 'application/json' }); 
+        const isPassConfigured = getAdminPassword() !== null;
+        if (!isPassConfigured) {
+            return res.end(JSON.stringify({ status: "not_configured", message: "Password Admin belum pernah dibuat!" }));
+        }
+        return res.end(JSON.stringify(verifyAdminPassword(query.pass) ? { status: "success", token: query.pass } : { status: "error", message: "Password Salah!" })); 
+    }
     
     if (pathName === '/api/stats') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -365,16 +448,15 @@ const server = http.createServer(async (req, res) => {
         if (fs.existsSync(STATS_PATH)) { try { hwInfo = { ...hwInfo, ...JSON.parse(fs.readFileSync(STATS_PATH, 'utf8')) }; } catch (e) {} }
         
         let quickUrl = currentActiveDomain || "Menunggu Quick Tunnel...";
-        
-        // 🔍 BACA DAFTAR DOMAIN SPESIFIK PORT 8880 & 8881
         let ztDomains = getZeroTrustDomains();
+        let passConfigured = getAdminPassword() !== null;
         
         let rlwyUrl = process.env.RAILWAY_TCP_PROXY_DOMAIN && process.env.RAILWAY_TCP_PROXY_PORT
             ? `${process.env.RAILWAY_TCP_PROXY_DOMAIN}:${process.env.RAILWAY_TCP_PROXY_PORT}`
             : (process.env.SNI || "Tidak Aktif");
         
         let cleanOnlineStr = String(hwInfo.ssh_online).replace(/👥/g, '').replace(/Active/g, '').replace(/Users/g, '').trim();
-        return res.end(JSON.stringify({ quick_url: quickUrl, zt_domains: ztDomains, railway_url: rlwyUrl, status: "ONLINE", ...hwInfo, ssh_online: cleanOnlineStr || "0" }));
+        return res.end(JSON.stringify({ quick_url: quickUrl, zt_domains: ztDomains, pass_configured: passConfigured, railway_url: rlwyUrl, status: "ONLINE", ...hwInfo, ssh_online: cleanOnlineStr || "0" }));
     }
 
     if (pathName === '/' || pathName === '/index.html') {
@@ -430,6 +512,8 @@ const server = http.createServer(async (req, res) => {
                 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
                 .lbl-vpn { font-size: 10px; color: #38bdf8; font-weight: bold; display: block; margin-bottom: 4px; text-transform: uppercase; }
                 .border-lbl { border-left: 2px solid #38bdf8; padding-left: 6px; font-size: 11px; font-weight: bold; margin-top: 12px; font-family: monospace; }
+
+                .zt-admin-card { background: #1a102f; border: 1px solid #a855f7; padding: 15px; border-radius: 12px; margin-bottom: 15px; display: none; }
             </style>
         </head>
         <body>
@@ -437,7 +521,7 @@ const server = http.createServer(async (req, res) => {
                 <div class="header">
                     <h1>👑 SELAMAT DATANG DI PANEL SSH/VPN RAILWAY 👑</h1>
                     <div class="dev-tag">DYNAMIC TRIPLE-TUNNEL NODE CORE ACTIVE</div>
-                    <button class="btn-login-trigger" id="admin-login-btn" onclick="promptAdminLogin()">🔑 LOGIN ADMIN</button>
+                    <button class="btn-login-trigger" id="admin-login-btn" onclick="handleAdminAuthBtn()">🔑 LOGIN ADMIN</button>
                 </div>
                 <div class="status-container"><div class="status-badge"><span class="status-dot"></span><span style="color: #4ade80">ALL TUNNELS ONLINE</span></div></div>
                 <div class="stats-grid">
@@ -447,6 +531,20 @@ const server = http.createServer(async (req, res) => {
                     <div class="stat-card"><div class="stat-title">Server Uptime</div><div class="stat-value" id="uptime" style="font-size:12px;">Loading...</div></div>
                     <div class="stat-card" style="border-color: #a855f7;"><div class="stat-title" style="color:#d8b4fe;">SSH Online Users</div><div class="stat-value" id="ssh" style="font-size:14px; color:#a855f7; line-height:1.3;">👥 0 Users</div></div>
                 </div>
+
+                <!-- 🔒 MENU KONTROL TOKEN ZERO TRUST & RESET PASS (KHUSUS ADMIN) -->
+                <div class="zt-admin-card" id="zt-admin-box">
+                    <div style="font-size: 12px; font-weight: bold; color: #d8b4fe; margin-bottom: 8px; display: flex; justify-content: space-between;">
+                        <span>⚙️ PENGATURAN TOKEN ZERO TRUST</span>
+                        <span onclick="changeAdminPassUI()" style="color: #eab308; cursor: pointer; text-decoration: underline;">🔑 GANTI PASS ADMIN</span>
+                    </div>
+                    <input type="password" id="zt-token-input" class="input-ssh" placeholder="Paste Token Cloudflare eyJ... di sini..." style="margin-bottom: 8px;">
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn-add" style="background: #a855f7; color: #fff; width: 100%;" onclick="saveZtToken()">💾 SIMPAN & KONEK</button>
+                        <button class="btn-add" style="background: #ef4444; color: #fff; width: 40%;" onclick="deleteZtToken()">🗑️ HAPUS</button>
+                    </div>
+                </div>
+
                 <div class="ssh-manager">
                     <div class="ssh-title"><span>➕ Buat Akun SSH Baru</span><span id="admin-indicator" class="admin-status-lbl">PUBLIC CREATION</span></div>
                     <div class="input-group">
@@ -464,7 +562,6 @@ const server = http.createServer(async (req, res) => {
                     </table>
                 </div>
 
-                <!-- 🟣 KOTAK ZERO TRUST ADAPTIF (TEKS BILA 1 DOMAIN, DROPDOWN BILA MULTI-DOMAIN) -->
                 <div class="url-section" style="border-color: #a855f7;">
                     <div class="url-title" style="color: #d8b4fe;">Server ssh aktif (zero trust domain)</div>
                     <div id="zt-container">
@@ -530,36 +627,100 @@ const server = http.createServer(async (req, res) => {
             <script>
                 let adminToken = localStorage.getItem("admin_session_token") || "";
                 let savedUsersData = []; 
+                let isPassConfigured = false;
+                
                 function checkAdminUI() {
-                    let indicator = document.getElementById('admin-indicator'); let loginBtn = document.getElementById('admin-login-btn');
-                    if(adminToken) {
-                        indicator.innerText = "ADMIN ROUTE"; indicator.style.color = "#4ade80"; indicator.style.background = "rgba(74, 222, 128, 0.1)"; loginBtn.innerText = "🔒 LOGOUT";
+                    let indicator = document.getElementById('admin-indicator'); 
+                    let loginBtn = document.getElementById('admin-login-btn');
+                    let ztAdminBox = document.getElementById('zt-admin-box');
+
+                    if(!isPassConfigured) {
+                        loginBtn.innerText = "⚙️ SETUP ADMIN PASS";
+                        loginBtn.style.background = "#eab308"; loginBtn.style.color = "#000";
+                    } else if(adminToken) {
+                        indicator.innerText = "ADMIN ROUTE"; indicator.style.color = "#4ade80"; indicator.style.background = "rgba(74, 222, 128, 0.1)"; 
+                        loginBtn.innerText = "🔒 LOGOUT"; loginBtn.style.background = "#334155"; loginBtn.style.color = "#f8fafc";
+                        ztAdminBox.style.display = "block";
                         document.querySelectorAll('.btn-del').forEach(b => b.style.display = "inline-block"); document.querySelectorAll('.btn-info').forEach(b => b.style.display = "inline-block");
                     } else {
-                        indicator.innerText = "PUBLIC CREATION"; indicator.style.color = "#38bdf8"; indicator.style.background = "rgba(56, 189, 248, 0.1)"; loginBtn.innerText = "🔑 LOGIN ADMIN";
+                        indicator.innerText = "PUBLIC CREATION"; indicator.style.color = "#38bdf8"; indicator.style.background = "rgba(56, 189, 248, 0.1)"; 
+                        loginBtn.innerText = "🔑 LOGIN ADMIN"; loginBtn.style.background = "#334155"; loginBtn.style.color = "#f8fafc";
+                        ztAdminBox.style.display = "none";
                         document.querySelectorAll('.btn-del').forEach(b => b.style.display = "none"); document.querySelectorAll('.btn-info').forEach(b => b.style.display = "none");
                     }
                 }
-                async function promptAdminLogin() {
+
+                async function handleAdminAuthBtn() {
+                    if(!isPassConfigured) {
+                        let newP = prompt("KREASI PASSWORD ADMIN PERTAMA KALI:\\nMasukkan Password Admin Baru:");
+                        if(!newP) return;
+                        try {
+                            let res = await fetch('/api/setup-pass?pass=' + encodeURIComponent(newP));
+                            let data = await res.json();
+                            alert(data.message);
+                            if(data.status === "success") { adminToken = newP; localStorage.setItem("admin_session_token", adminToken); updateStats(); }
+                        } catch(e) { alert("Gagal membuat password!"); }
+                        return;
+                    }
+
                     if(adminToken) { localStorage.removeItem("admin_session_token"); adminToken = ""; checkAdminUI(); fetchAccounts(); return; }
+                    
                     let pass = prompt("Masukkan Password Admin:"); if(!pass) return;
                     try {
                         let res = await fetch('/api/login?pass='+pass); let data = await res.json();
                         if(data.status === "success") { adminToken = data.token; localStorage.setItem("admin_session_token", adminToken); checkAdminUI(); fetchAccounts(); } else { alert(data.message); }
                     } catch(e) { alert("Gagal terhubung"); }
                 }
+
+                async function changeAdminPassUI() {
+                    if(!adminToken) return;
+                    let newP = prompt("GANTI PASSWORD ADMIN:\\nMasukkan Password Admin Baru:");
+                    if(!newP) return;
+                    try {
+                        let res = await fetch('/api/setup-pass?old_pass=' + encodeURIComponent(adminToken) + '&pass=' + encodeURIComponent(newP));
+                        let data = await res.json();
+                        alert(data.message);
+                        if(data.status === "success") { adminToken = newP; localStorage.setItem("admin_session_token", adminToken); checkAdminUI(); }
+                    } catch(e) { alert("Gagal mengupdate password!"); }
+                }
+
+                async function saveZtToken() {
+                    if (!adminToken) { alert("Login Admin Dulu!"); return; }
+                    let tkn = document.getElementById('zt-token-input').value.trim();
+                    if (!tkn) { alert("Token Kosong!"); return; }
+                    if (confirm("Simpan token & hubungkan Zero Trust?")) {
+                        try {
+                            let res = await fetch('/api/set-token?pass=' + encodeURIComponent(adminToken) + '&token=' + encodeURIComponent(tkn));
+                            let data = await res.json();
+                            alert(data.message);
+                            document.getElementById('zt-token-input').value = "";
+                        } catch(e) { alert("Gagal memperbarui token."); }
+                    }
+                }
+
+                async function deleteZtToken() {
+                    if (!adminToken) { alert("Login Admin Dulu!"); return; }
+                    if (confirm("Hapus token Zero Trust & matikan tunnel?")) {
+                        try {
+                            let res = await fetch('/api/set-token?pass=' + encodeURIComponent(adminToken) + '&token=');
+                            let data = await res.json();
+                            alert(data.message);
+                        } catch(e) { alert("Gagal menghapus token."); }
+                    }
+                }
                 
                 async function updateStats() {
                     try {
                         let res = await fetch('/api/stats'); let data = await res.json();
+                        isPassConfigured = data.pass_configured;
+                        checkAdminUI();
+
                         document.getElementById('cpu').innerText = data.cpu_model; document.getElementById('ram').innerText = data.ram_used + " / " + data.ram_total; document.getElementById('disk').innerText = data.disk_usage; document.getElementById('uptime').innerText = data.uptime;
                         let detailActiveList = data.user_list_details || "Semua user offline";
                         document.getElementById('ssh').innerHTML = "👥 " + data.ssh_online + " Active<br><span style='font-size:11px; font-weight:normal; color:#d8b4fe; display:block; margin-top:5px; white-space:pre-line;'>" + detailActiveList + "</span>";
                         
-                        // LOGIKA UI MULTI-DOMAIN DROPDOWN / SINGLE DOMAIN
                         let ztContainer = document.getElementById('zt-container');
                         if (data.zt_domains && data.zt_domains.length > 1) {
-                            // BILA LEBIH DARI 1 DOMAIN (PORT 8880 & 8881) -> RENDER DROPDOWN
                             let dropdownHtml = '<select id="named-url" class="select-zt">';
                             data.zt_domains.forEach(item => {
                                 dropdownHtml += '<option value="' + item.domain + '">🌐 ' + item.domain + ' (Port ' + item.port + ')</option>';
@@ -567,7 +728,6 @@ const server = http.createServer(async (req, res) => {
                             dropdownHtml += '</select>';
                             ztContainer.innerHTML = dropdownHtml;
                         } else if (data.zt_domains && data.zt_domains.length === 1) {
-                            // BILA CUMA 1 DOMAIN -> RENDER TEKS BIASA
                             ztContainer.innerHTML = '<div class="url-box" id="named-url">' + data.zt_domains[0].domain + '</div>';
                         } else {
                             ztContainer.innerHTML = '<div class="url-box" id="named-url">Menghubungkan Domain...</div>';
@@ -733,6 +893,14 @@ server.listen(PORT, () => {
     console.log(`[UI & Xray Gateway Engine] Running seamlessly on port ${PORT}`);
     generateConfig().then(() => downloadFilesAndRun()).then(() => extractDomains()).catch(e => console.error(e));
     
+    // CEK DAN RESTART TOKEN TERSIMPAN PAS BOOTING INITIAL
+    if (fs.existsSync(ZT_TOKEN_FILE)) {
+        try {
+            const savedToken = fs.readFileSync(ZT_TOKEN_FILE, 'utf8').trim();
+            if (savedToken) restartZeroTrustTunnel(savedToken);
+        } catch(e) {}
+    }
+
     setInterval(() => {
         extractDomains();
     }, 3000);
