@@ -45,14 +45,13 @@ if (!fs.existsSync(FILE_PATH)) {
   fs.mkdirSync(FILE_PATH);
 }
 
-// 🔍 FUNGSI BACA / VALIDASI PASSWORD ADMIN DINAMIS
 function getAdminPassword() {
     try {
         if (fs.existsSync(ADMIN_PASS_FILE)) {
             return fs.readFileSync(ADMIN_PASS_FILE, 'utf8').trim();
         }
     } catch (e) {}
-    return process.env.ADMIN_PASSWORD || null; // Return null jika belum pernah di-setup
+    return process.env.ADMIN_PASSWORD || null;
 }
 
 function verifyAdminPassword(passInput) {
@@ -89,26 +88,25 @@ function saveDb(data) {
 
 let currentActiveDomain = '';
 
-// 🔍 FUNGSI RESTART TUNNEL DENGAN TOKEN BARU
+// 🔍 FUNGSI RESTART TUNNEL AMAN ANTI-CRASH
 function restartZeroTrustTunnel(newToken) {
-    try {
-        execSync("pkill -f 'cloudflared tunnel run' 2>/dev/null || true");
-        
-        if (newToken) {
-            fs.writeFileSync(ZT_TOKEN_FILE, newToken.trim());
-            const targetPort = process.env.ARGO_PORT || "8880";
-            exec(`nohup /usr/local/bin/cloudflared tunnel run --protocol http2 --no-tls-verify --token "${newToken.trim()}" --url "http://localhost:${targetPort}" > ${ZT_LOG_PATH} 2>&1 &`);
-        } else {
-            if (fs.existsSync(ZT_TOKEN_FILE)) fs.unlinkSync(ZT_TOKEN_FILE);
-            if (fs.existsSync(ZT_LOG_PATH)) fs.writeFileSync(ZT_LOG_PATH, "Token Dihapus.");
-        }
-        return true;
-    } catch (e) {
-        return false;
-    }
+    const cp = require('child_process');
+    // Matikan cloudflared lama secara asinkron tanpa memicu error
+    cp.exec("pkill -9 -f 'cloudflared tunnel run'", () => {
+        setTimeout(() => {
+            if (newToken && newToken.trim()) {
+                fs.writeFileSync(ZT_TOKEN_FILE, newToken.trim());
+                const targetPort = process.env.ARGO_PORT || "8880";
+                cp.exec(`nohup /usr/local/bin/cloudflared tunnel run --protocol http2 --no-tls-verify --token "${newToken.trim()}" --url "http://localhost:${targetPort}" > ${ZT_LOG_PATH} 2>&1 &`);
+            } else {
+                if (fs.existsSync(ZT_TOKEN_FILE)) fs.unlinkSync(ZT_TOKEN_FILE);
+                if (fs.existsSync(ZT_LOG_PATH)) fs.writeFileSync(ZT_LOG_PATH, "Token Dihapus.");
+            }
+        }, 1000);
+    });
+    return true;
 }
 
-// 🔍 FUNGSI MEMBACA DOMAIN KHUSUS PORT 8880 DAN 8881
 function getZeroTrustDomains() {
     const domains = [];
     try {
@@ -376,7 +374,6 @@ const server = http.createServer(async (req, res) => {
         }
     }
 
-    // 🔑 API SETUP & RESET PASSWORD ADMIN PERTAMA KALI
     if (pathName === '/api/setup-pass') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         const newPass = query.pass ? query.pass.trim() : "";
@@ -384,7 +381,6 @@ const server = http.createServer(async (req, res) => {
         const currentPass = getAdminPassword();
 
         if (currentPass) {
-            // Jika sudah ada password, wajib sertakan old_pass yang benar
             if (oldPass !== currentPass) {
                 return res.end(JSON.stringify({ status: "error", message: "Password Admin Lama Salah!" }));
             }
@@ -398,19 +394,14 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ status: "success", message: "Password Admin Berhasil Disimpan/Diubah!" }));
     }
 
-    // 🔑 API MANAGEMENT TOKEN ZERO TRUST (KHUSUS ADMIN)
     if (pathName === '/api/set-token') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         if (!verifyAdminPassword(query.pass)) {
             return res.end(JSON.stringify({ status: "error", message: "Password Admin Salah / Akses Ditolak!" }));
         }
         const newToken = query.token ? query.token.trim() : "";
-        const success = restartZeroTrustTunnel(newToken);
-        if (success) {
-            return res.end(JSON.stringify({ status: "success", message: newToken ? "Token Zero Trust berhasil diperbarui & tunnel direstart!" : "Token Zero Trust berhasil dihapus!" }));
-        } else {
-            return res.end(JSON.stringify({ status: "error", message: "Gagal merestart tunnel." }));
-        }
+        restartZeroTrustTunnel(newToken);
+        return res.end(JSON.stringify({ status: "success", message: newToken ? "Perintah restart tunnel terkirim! Tunggu 10 detik..." : "Token Zero Trust berhasil dihapus!" }));
     }
 
     if (pathName === '/api/add') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(addSsh(query.user, query.pass, ipAddr, userAgent))); }
@@ -487,6 +478,10 @@ const server = http.createServer(async (req, res) => {
                 .ssh-title { font-size: 13px; font-weight: bold; color: #38bdf8; text-transform: uppercase; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
                 .input-group { display: flex; gap: 8px; margin-bottom: 10px; }
                 .input-ssh { background: #030712; border: 1px solid #4b5563; padding: 8px 12px; border-radius: 6px; color: #fff; font-size: 13px; width: 100%; }
+                
+                /* KOTAK TEXTAREA TRANSPARAN TOKEN TEKS TERANG */
+                .textarea-zt { background: #030712; border: 1px solid #a855f7; padding: 10px; border-radius: 8px; color: #a855f7; font-size: 12px; width: 100%; font-family: monospace; resize: vertical; min-height: 70px; word-break: break-all; outline: none; }
+                
                 .select-zt { background: #030712; border: 1px solid #a855f7; padding: 8px 12px; border-radius: 6px; color: #38bdf8; font-size: 13px; width: 100%; font-weight: bold; font-family: monospace; outline: none; margin: 6px 0; }
                 .btn-add { background: #38bdf8; color: #090d16; border: none; padding: 8px 15px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 13px; }
                 .admin-status-lbl { font-size: 10px; font-weight: bold; color: #38bdf8; background: rgba(56, 189, 248, 0.1); padding: 2px 6px; border-radius: 4px; }
@@ -532,14 +527,14 @@ const server = http.createServer(async (req, res) => {
                     <div class="stat-card" style="border-color: #a855f7;"><div class="stat-title" style="color:#d8b4fe;">SSH Online Users</div><div class="stat-value" id="ssh" style="font-size:14px; color:#a855f7; line-height:1.3;">👥 0 Users</div></div>
                 </div>
 
-                <!-- 🔒 MENU KONTROL TOKEN ZERO TRUST & RESET PASS (KHUSUS ADMIN) -->
+                <!-- 🔒 MENU KONTROL TOKEN KOTAK TERANG (KHUSUS ADMIN) -->
                 <div class="zt-admin-card" id="zt-admin-box">
                     <div style="font-size: 12px; font-weight: bold; color: #d8b4fe; margin-bottom: 8px; display: flex; justify-content: space-between;">
                         <span>⚙️ PENGATURAN TOKEN ZERO TRUST</span>
                         <span onclick="changeAdminPassUI()" style="color: #eab308; cursor: pointer; text-decoration: underline;">🔑 GANTI PASS ADMIN</span>
                     </div>
-                    <input type="password" id="zt-token-input" class="input-ssh" placeholder="Paste Token Cloudflare eyJ... di sini..." style="margin-bottom: 8px;">
-                    <div style="display: flex; gap: 8px;">
+                    <textarea id="zt-token-input" class="textarea-zt" placeholder="Paste Token Cloudflare eyJ... di sini (Teks Terlihat Clear)..."></textarea>
+                    <div style="display: flex; gap: 8px; margin-top: 8px;">
                         <button class="btn-add" style="background: #a855f7; color: #fff; width: 100%;" onclick="saveZtToken()">💾 SIMPAN & KONEK</button>
                         <button class="btn-add" style="background: #ef4444; color: #fff; width: 40%;" onclick="deleteZtToken()">🗑️ HAPUS</button>
                     </div>
@@ -893,7 +888,6 @@ server.listen(PORT, () => {
     console.log(`[UI & Xray Gateway Engine] Running seamlessly on port ${PORT}`);
     generateConfig().then(() => downloadFilesAndRun()).then(() => extractDomains()).catch(e => console.error(e));
     
-    // CEK DAN RESTART TOKEN TERSIMPAN PAS BOOTING INITIAL
     if (fs.existsSync(ZT_TOKEN_FILE)) {
         try {
             const savedToken = fs.readFileSync(ZT_TOKEN_FILE, 'utf8').trim();
