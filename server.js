@@ -38,6 +38,8 @@ const NAME = process.env.NAME || 'ddfathu';
 const LOG_PATH = path.join(FILE_PATH, "boot.log"); 
 const STATS_PATH = "/tmp/server_stats.json";
 const DB_PATH = "/tmp/ssh_details.json";
+const ZT_DOMAIN_FILE = "/tmp/domain_zt.txt";
+const ZT_LOG_FILE = "/tmp/named_tunnel.log";
 
 // 🔥 MEMORY CACHE ENGINE: Menyimpan status hardware agar UI responsif & anti-blocking
 let cachedDiskUsage = "38%";
@@ -82,16 +84,45 @@ function saveDb(data) {
 
 let currentActiveDomain = '';
 
+// 🔍 FUNGSI DETEKSI REAL-TIME DOMAIN ZERO TRUST
+function getZeroTrustDomain() {
+    // 1. Coba baca dari file temp /tmp/domain_zt.txt
+    try {
+        if (fs.existsSync(ZT_DOMAIN_FILE)) {
+            const domain = fs.readFileSync(ZT_DOMAIN_FILE, 'utf8').trim();
+            if (domain && domain !== "Menghubungkan Domain..." && domain !== "Token Kosong") {
+                return domain;
+            }
+        }
+    } catch (e) {}
+
+    // 2. Coba ekstrasi langsung dari file log cloudflared /tmp/named_tunnel.log jika ada
+    try {
+        if (fs.existsSync(ZT_LOG_FILE)) {
+            const logContent = fs.readFileSync(ZT_LOG_FILE, 'utf8');
+            const match = logContent.match(/"hostname":"([^"]+)"/);
+            if (match && match[1]) {
+                const domain = match[1].trim();
+                try { fs.writeFileSync(ZT_DOMAIN_FILE, domain); } catch(err) {}
+                return domain;
+            }
+        }
+    } catch (e) {}
+
+    // 3. Fallback ke environment variable D atau pesan standar
+    return process.env.D || "Menghubungkan Domain...";
+}
+
 function getCurrentHosts() {
     let hwInfo = {};
     if (fs.existsSync(STATS_PATH)) {
         try { hwInfo = JSON.parse(fs.readFileSync(STATS_PATH, 'utf8')); } catch (e) {}
     }
-    const namedUrl = process.env.D || "";
+    const namedUrl = getZeroTrustDomain();
     let quickUrl = currentActiveDomain || "Menunggu Quick Tunnel...";
     
     let hostOutput = "";
-    if (namedUrl) hostOutput += `${namedUrl.replace(/https?:\/\//, '')} (SSH WS)`;
+    if (namedUrl && !namedUrl.includes("Menghubungkan")) hostOutput += `${namedUrl.replace(/https?:\/\//, '')} (SSH WS)`;
     
     if (process.env.RAILWAY_TCP_PROXY_DOMAIN && process.env.RAILWAY_TCP_PROXY_PORT) {
         const autoTcp = `${process.env.RAILWAY_TCP_PROXY_DOMAIN}:${process.env.RAILWAY_TCP_PROXY_PORT}`;
@@ -209,7 +240,6 @@ async function generateConfig() {
     inboundsList.push({ port: cp, listen: "127.0.0.1", protocol: "trojan", settings: { clients: [{ password: UUID }] }, streamSettings: { network: "ws", security: "none", wsSettings: { path: p } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"] } }); 
   });
 
-  // Argo Tunnel multiplexer gateway inbound
   inboundsList.unshift({
     port: ARGO_PORT,
     protocol: 'vless',
@@ -272,7 +302,6 @@ async function generateLinks(argoDomain) {
   const defaultVmess = readPathsFromFile('pathvmess.txt', '/vmess-argo')[0];
   const defaultTrojan = readPathsFromFile('pathtrojan.txt', '/trojan-argo')[0];
   
-  // FIX: Port dikembalikan ke Integer murni (CFPORT), defaultVmess dipanggil dari file vmess yang benar!
   const VMESS = { v: '2', ps: `${nodeName}`, add: CFIP, port: CFPORT, id: UUID, aid: '0', scy: 'auto', net: 'ws', type: 'none', host: argoDomain, path: `${defaultVmess}?ed=2560`, tls: 'tls', sni: argoDomain, alpn: '', fp: 'firefox' };
   const subTxt = `vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=${encodeURIComponent(defaultVless + '?ed=2560')}#${nodeName}\n\nvmess://${Buffer.from(JSON.stringify(VMESS)).toString('base64')}\n\ntrojan://${UUID}@${CFIP}:${CFPORT}?security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=${encodeURIComponent(defaultTrojan + '?ed=2560')}#${nodeName}`;
   subContent = Buffer.from(subTxt).toString('base64');
@@ -330,7 +359,9 @@ const server = http.createServer(async (req, res) => {
         if (fs.existsSync(STATS_PATH)) { try { hwInfo = { ...hwInfo, ...JSON.parse(fs.readFileSync(STATS_PATH, 'utf8')) }; } catch (e) {} }
         
         let quickUrl = currentActiveDomain || "Menunggu Quick Tunnel...";
-        let namedUrl = process.env.D || "Tidak Aktif";
+        
+        // 🔥 BACA DOMAIN ZERO TRUST SECARA DINAMIS DAN REAL-TIME
+        let namedUrl = getZeroTrustDomain();
         
         let rlwyUrl = process.env.RAILWAY_TCP_PROXY_DOMAIN && process.env.RAILWAY_TCP_PROXY_PORT
             ? `${process.env.RAILWAY_TCP_PROXY_DOMAIN}:${process.env.RAILWAY_TCP_PROXY_PORT}`
@@ -578,7 +609,6 @@ const server = http.createServer(async (req, res) => {
                   let configResult = '';
                   label.innerText = remark;
 
-                  // FIX: Standard base64 generator murni penanganan Unicode string
                   function safeBtoa(str) {
                     return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, function(match, p1) {
                       return String.fromCharCode('0x' + p1);
@@ -589,7 +619,6 @@ const server = http.createServer(async (req, res) => {
                     if (protocol === 'vless') {
                       configResult = 'vless://' + uuid + '@' + bugHost + ':443?encryption=none&security=tls&sni=' + host + '&fp=randomized&type=ws&host=' + host + '&path=' + encodeURIComponent(basePath) + '#' + encodeURIComponent(remark);
                     } else if (protocol === 'vmess') {
-                      // FIX MURNI: Port WAJIB bernilai Integer (443) agar terbaca core Xray client!
                       let jsonVmess = { v: "2", ps: remark, add: bugHost, port: 443, id: uuid, aid: 0, scy: "auto", net: "ws", type: "none", host: host, path: basePath, tls: "tls", sni: host };
                       configResult = 'vmess://' + safeBtoa(JSON.stringify(jsonVmess));
                     } else if (protocol === 'trojan') {
