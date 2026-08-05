@@ -22,6 +22,20 @@ sysctl -w net.core.netdev_max_backlog=50000 2>/dev/null
 sysctl -w net.ipv4.tcp_max_syn_backlog=8192 2>/dev/null
 # =================================================================
 
+echo "[*] Membuat Banner Dropbear..."
+cat << 'EOF' > /etc/dropbear_banner
+<center><font color="#FF0000">==================================================</font></center><br>
+<center><font color="#00FF00">👑 SELAMAT MENIKMATI 👑</font></center><br>
+<center><font color="#00FFFF">🥳 SSH SERVER PAAS RAILWAY 🥳</font></center><br>
+<br>
+<font color="#FFA500"> 🔹 MULTIPLEXER :</font> <font color="#FFFF00">NODE.JS JAVASCRIPT ENGINE</font><br>
+<font color="#00FF00"> 🔹 OS PLATFORM :</font> <font color="#00FFFF">UBUNTU</font><br>
+<font color="#0000FF"> 🔹 SSH SERVICE :</font> <font color="#9B59B6">DROPBEAR ENHANCED BUFFER</font><br>
+<center><font color="#FF0000">==================================================</font></center><br>
+<center><font color="#FFD700">powered by : d e d e f a t h u</font></center><br>
+<center><font color="#FF0000">==================================================</font></center>
+EOF
+
 SSL_INTERNAL_PORT="2443"
 
 echo "[*] Membuat Sertifikat SSL Stunnel..."
@@ -31,8 +45,9 @@ openssl req -new -newkey rsa:2048 -days 365 -nodes -x509 \
     -keyout /etc/stunnel/stunnel.pem -out /etc/stunnel/stunnel.pem
 chmod 600 /etc/stunnel/stunnel.pem
 
-echo "[*] Memulai Dropbear Ultra Anti-Reconnect..."
-/usr/sbin/dropbear -p 127.0.0.1:22 -W 1048576 -K 15 -I 300
+echo "[*] Memulai Dropbear Server di Port Lokal 22..."
+/usr/sbin/dropbear -p 127.0.0.1:22 -b /etc/dropbear_banner -W 1048576 -K 15 -I 300
+sleep 1
 
 echo "[*] Mengonfigurasi & Memulai Stunnel di Port 2443..."
 cat <<EOF > /etc/stunnel/stunnel.conf
