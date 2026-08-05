@@ -852,7 +852,7 @@ const server = http.createServer(async (req, res) => {
                   alert('Config Berhasil Disalin!');
                 }
 
-                setInterval(updateStats, 10000); 
+                setInterval(updateStats, 600000); 
                 updateStats(); 
                 fetchAccounts();
                 fetchServerInfo();
