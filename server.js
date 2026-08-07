@@ -92,17 +92,14 @@ let currentActiveDomain = '';
 // 🔍 FUNGSI RESTART SINGLE TUNNEL UNTUK SEMUA PORT
 function restartSingleTunnel(newToken) {
     const cp = require('child_process');
-    // Matikan biner cloudflared yang sedang berjalan
     cp.exec("pkill -9 -f 'cloudflared'", () => {
         setTimeout(() => {
             if (newToken && newToken.trim()) {
                 fs.writeFileSync(ZT_SINGLE_TOKEN_FILE, newToken.trim());
-                // Murni jalankan via TOKEN tanpa merantai --url agar Ingress Rules Dashboard CF bekerja penuh
                 cp.exec(`nohup ${botPath} tunnel run --protocol http2 --no-tls-verify --token "${newToken.trim()}" > ${ZT_LOG_PATH} 2>&1 &`);
             } else {
                 if (fs.existsSync(ZT_SINGLE_TOKEN_FILE)) fs.unlinkSync(ZT_SINGLE_TOKEN_FILE);
                 if (fs.existsSync(ZT_LOG_PATH)) fs.writeFileSync(ZT_LOG_PATH, "Token Dihapus.");
-                // Jika Token Dihapus, balik ke Quick Tunnel untuk Vmess (Port 8001)
                 let args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile ${LOG_PATH} --loglevel info --url http://localhost:${ARGO_PORT}`;
                 cp.exec(`nohup ${botPath} ${args} >/dev/null 2>&1 &`);
             }
@@ -110,7 +107,7 @@ function restartSingleTunnel(newToken) {
     });
 }
 
-// 🔍 REGEX PARSER PARSE DOMAIN DENGAN FILTER PORT NYA MASING-MASING
+// 🔍 REGEX PARSER UNTUK FILTER DOMAIN DARI INGRESS LOGS
 function getDomainsByPort(targetPorts) {
     const domains = [];
     try {
@@ -543,7 +540,7 @@ const server = http.createServer(async (req, res) => {
                     <div class="stat-card" style="border-color: #a855f7;"><div class="stat-title" style="color:#d8b4fe;">SSH Online Users</div><div class="stat-value" id="ssh" style="font-size:14px; color:#a855f7; line-height:1.3;">👥 0 Users</div></div>
                 </div>
 
-                <!-- 🔒 MENU 1 TOKEN UNTUK SEMUA PORT (MULTI-HOSTNAME) -->
+                <!-- 🔒 MENU 1 TOKEN UNTUK SEMUA PORT -->
                 <div class="zt-admin-card" id="zt-admin-box">
                     <div style="font-size: 12px; font-weight: bold; color: #d8b4fe; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
                         <span>⚙️ SINGLE TOKEN MULTI-SERVICE TUNNEL</span>
@@ -787,7 +784,7 @@ const server = http.createServer(async (req, res) => {
                         document.getElementById('railway-url').innerText = data.railway_url; 
                         document.getElementById('quick-url').innerText = data.quick_url;
 
-                        // UPDATE OPTION DROPDOWN DOMAIN UNTUK CONFIG GENERATOR
+                        // 🔍 UPDATE OPTION DROPDOWN DOMAIN KHUSUS CONFIG GENERATOR (HANYA QUICK & PORT 8001)
                         let domainSelect = document.getElementById('domainSelect');
                         let currentSelected = domainSelect.value;
                         let optionsHtml = '';
@@ -798,18 +795,12 @@ const server = http.createServer(async (req, res) => {
 
                         if (data.zt_vmess_domains && data.zt_vmess_domains.length > 0) {
                             data.zt_vmess_domains.forEach(d => {
-                                optionsHtml += '<option value="' + d.domain + '">🛡️ Zero Argo VMess: ' + d.domain + '</option>';
-                            });
-                        }
-
-                        if (data.zt_domains && data.zt_domains.length > 0) {
-                            data.zt_domains.forEach(d => {
-                                optionsHtml += '<option value="' + d.domain + '">🔑 Zero Argo SSH: ' + d.domain + '</option>';
+                                optionsHtml += '<option value="' + d.domain + '">🛡️ Zero Argo VMess (Port 8001): ' + d.domain + '</option>';
                             });
                         }
 
                         if (!optionsHtml) {
-                            optionsHtml = '<option value="">-- Menunggu Domain Tunnel --</option>';
+                            optionsHtml = '<option value="">-- Menunggu Domain VMess --</option>';
                         }
 
                         domainSelect.innerHTML = optionsHtml;
@@ -918,7 +909,7 @@ const server = http.createServer(async (req, res) => {
                       let jsonVmess = { v: "2", ps: remark, add: host, port: 443, id: uuid, aid: 0, scy: "auto", net: "ws", type: "none", host: bugHost, path: basePath, tls: "tls", sni: bugHost };
                       configResult = 'vmess://' + safeBtoa(JSON.stringify(jsonVmess));
                     } else if (protocol === 'trojan') {
-                      configResult = 'trojan://' + uuid + '@' + host + ':443?security=tls&sni=' + host + '&type=ws&host=' + host + '&path=' + encodeURIComponent(basePath) + '#' + encodeURIComponent(remark);
+                      configResult = 'trojan://' + uuid + '@' + host + ':443?security=tls&sni=' + bugHost + '&type=ws&host=' + bugHost + '&path=' + encodeURIComponent(basePath) + '#' + encodeURIComponent(remark);
                     }
                   } 
                   else if (type === 'cdn') {
