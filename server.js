@@ -32,7 +32,8 @@ const NAME = process.env.NAME || 'ddfathu';
 
 const LOG_PATH = path.join(FILE_PATH, "boot.log"); 
 const ZT_LOG_PATH = "/tmp/named_tunnel.log";
-const ZT_TOKEN_FILE = "/tmp/zt_token.txt";
+const ZT_SINGLE_TOKEN_FILE = "/tmp/zt_single_token.txt";
+
 const ADMIN_PASS_FILE = "/tmp/admin_pass.txt";
 const STATS_PATH = "/tmp/server_stats.json";
 const DB_PATH = "/tmp/ssh_details.json";
@@ -88,32 +89,36 @@ function saveDb(data) {
 
 let currentActiveDomain = '';
 
-// 🔍 FUNGSI RESTART TUNNEL AMAN ANTI-CRASH
-function restartZeroTrustTunnel(newToken) {
+// 🔍 FUNGSI RESTART SINGLE TUNNEL UNTUK SEMUA PORT
+function restartSingleTunnel(newToken) {
     const cp = require('child_process');
-    // Matikan cloudflared lama secara asinkron tanpa memicu error
-    cp.exec("pkill -9 -f 'cloudflared tunnel run'", () => {
+    // Matikan biner cloudflared yang sedang berjalan
+    cp.exec("pkill -9 -f 'cloudflared'", () => {
         setTimeout(() => {
             if (newToken && newToken.trim()) {
-                fs.writeFileSync(ZT_TOKEN_FILE, newToken.trim());
-                const targetPort = process.env.ARGO_PORT || "8880";
-                cp.exec(`nohup /usr/local/bin/cloudflared tunnel run --protocol http2 --no-tls-verify --token "${newToken.trim()}" --url "http://localhost:${targetPort}" > ${ZT_LOG_PATH} 2>&1 &`);
+                fs.writeFileSync(ZT_SINGLE_TOKEN_FILE, newToken.trim());
+                // Murni jalankan via TOKEN tanpa merantai --url agar Ingress Rules Dashboard CF bekerja penuh
+                cp.exec(`nohup ${botPath} tunnel run --protocol http2 --no-tls-verify --token "${newToken.trim()}" > ${ZT_LOG_PATH} 2>&1 &`);
             } else {
-                if (fs.existsSync(ZT_TOKEN_FILE)) fs.unlinkSync(ZT_TOKEN_FILE);
+                if (fs.existsSync(ZT_SINGLE_TOKEN_FILE)) fs.unlinkSync(ZT_SINGLE_TOKEN_FILE);
                 if (fs.existsSync(ZT_LOG_PATH)) fs.writeFileSync(ZT_LOG_PATH, "Token Dihapus.");
+                // Jika Token Dihapus, balik ke Quick Tunnel untuk Vmess (Port 8001)
+                let args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile ${LOG_PATH} --loglevel info --url http://localhost:${ARGO_PORT}`;
+                cp.exec(`nohup ${botPath} ${args} >/dev/null 2>&1 &`);
             }
         }, 1000);
     });
-    return true;
 }
 
-function getZeroTrustDomains() {
+// 🔍 REGEX PARSER PARSE DOMAIN DENGAN FILTER PORT NYA MASING-MASING
+function getDomainsByPort(targetPorts) {
     const domains = [];
     try {
         if (fs.existsSync(ZT_LOG_PATH)) {
             const logContent = fs.readFileSync(ZT_LOG_PATH, 'utf8');
+            const portRegexStr = targetPorts.join('|');
 
-            const regexIngress = /(?:\\?"|")hostname(?:\\?"|")\s*:\s*(?:\\?"|")([^"\\]+)(?:\\?"|")[^}]*?localhost:(8880|8881)/g;
+            const regexIngress = new RegExp(`(?:\\\\?"|")hostname(?:\\\\?"|")\\s*:\\s*(?:\\\\?"|")([^"\\\\]+)(?:\\\\?"|")[^}]*?localhost:(${portRegexStr})`, 'g');
             let match;
             
             while ((match = regexIngress.exec(logContent)) !== null) {
@@ -125,7 +130,7 @@ function getZeroTrustDomains() {
             }
 
             if (domains.length === 0) {
-                const regexIngressReverse = /localhost:(8880|8881)[^}]*?(?:\\?"|")hostname(?:\\?"|")\s*:\s*(?:\\?"|")([^"\\]+)(?:\\?"|")/g;
+                const regexIngressReverse = new RegExp(`localhost:(${portRegexStr})[^}]*?(?:\\\\?"|")hostname(?:\\\\?"|")\\s*:\\s*(?:\\\\?"|")([^"\\\\]+)(?:\\\\?"|")`, 'g');
                 while ((match = regexIngressReverse.exec(logContent)) !== null) {
                     const portNum = match[1];
                     const domainName = match[2].trim();
@@ -145,7 +150,7 @@ function getCurrentHosts() {
     if (fs.existsSync(STATS_PATH)) {
         try { hwInfo = JSON.parse(fs.readFileSync(STATS_PATH, 'utf8')); } catch (e) {}
     }
-    const ztDomains = getZeroTrustDomains();
+    const ztDomains = getDomainsByPort(['8880', '8881']);
     const namedUrl = ztDomains.length > 0 ? ztDomains[0].domain : (process.env.D || "");
     let quickUrl = currentActiveDomain || "Menunggu Quick Tunnel...";
     
@@ -302,9 +307,19 @@ async function downloadFilesAndRun() {
 
   exec(`nohup ${webPath} -c ${FILE_PATH}/config.json >/dev/null 2>&1 &`);
   
-  let args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile ${LOG_PATH} --loglevel info --url http://localhost:${ARGO_PORT}`;
-  
-  exec(`nohup ${botPath} ${args} >/dev/null 2>&1 &`);
+  if (fs.existsSync(ZT_SINGLE_TOKEN_FILE)) {
+    const singleToken = fs.readFileSync(ZT_SINGLE_TOKEN_FILE, 'utf8').trim();
+    if (singleToken) {
+      restartSingleTunnel(singleToken);
+    } else {
+      let args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile ${LOG_PATH} --loglevel info --url http://localhost:${ARGO_PORT}`;
+      exec(`nohup ${botPath} ${args} >/dev/null 2>&1 &`);
+    }
+  } else {
+    let args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile ${LOG_PATH} --loglevel info --url http://localhost:${ARGO_PORT}`;
+    exec(`nohup ${botPath} ${args} >/dev/null 2>&1 &`);
+  }
+
   await new Promise(r => setTimeout(r, 5000));
 }
 
@@ -397,11 +412,13 @@ const server = http.createServer(async (req, res) => {
     if (pathName === '/api/set-token') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         if (!verifyAdminPassword(query.pass)) {
-            return res.end(JSON.stringify({ status: "error", message: "Password Admin Salah / Akses Ditolak!" }));
+            return res.end(JSON.stringify({ status: "error", message: "Akses Ditolak! Anda harus Login Admin terlebih dahulu." }));
         }
-        const newToken = query.token ? query.token.trim() : "";
-        restartZeroTrustTunnel(newToken);
-        return res.end(JSON.stringify({ status: "success", message: newToken ? "Perintah restart tunnel terkirim! Tunggu 10 detik..." : "Token Zero Trust berhasil dihapus!" }));
+        
+        const singleToken = query.token !== undefined ? query.token.trim() : null;
+        if (singleToken !== null) restartSingleTunnel(singleToken);
+
+        return res.end(JSON.stringify({ status: "success", message: "Perintah restart tunnel terkirim! Tunggu 10 detik..." }));
     }
 
     if (pathName === '/api/add') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(addSsh(query.user, query.pass, ipAddr, userAgent))); }
@@ -439,7 +456,8 @@ const server = http.createServer(async (req, res) => {
         if (fs.existsSync(STATS_PATH)) { try { hwInfo = { ...hwInfo, ...JSON.parse(fs.readFileSync(STATS_PATH, 'utf8')) }; } catch (e) {} }
         
         let quickUrl = currentActiveDomain || "Menunggu Quick Tunnel...";
-        let ztDomains = getZeroTrustDomains();
+        let ztSshDomains = getDomainsByPort(['8880', '8881']);
+        let ztVmessDomains = getDomainsByPort(['8001']);
         let passConfigured = getAdminPassword() !== null;
         
         let rlwyUrl = process.env.RAILWAY_TCP_PROXY_DOMAIN && process.env.RAILWAY_TCP_PROXY_PORT
@@ -447,7 +465,7 @@ const server = http.createServer(async (req, res) => {
             : (process.env.SNI || "Tidak Aktif");
         
         let cleanOnlineStr = String(hwInfo.ssh_online).replace(/👥/g, '').replace(/Active/g, '').replace(/Users/g, '').trim();
-        return res.end(JSON.stringify({ quick_url: quickUrl, zt_domains: ztDomains, pass_configured: passConfigured, railway_url: rlwyUrl, status: "ONLINE", ...hwInfo, ssh_online: cleanOnlineStr || "0" }));
+        return res.end(JSON.stringify({ quick_url: quickUrl, zt_domains: ztSshDomains, zt_vmess_domains: ztVmessDomains, pass_configured: passConfigured, railway_url: rlwyUrl, status: "ONLINE", ...hwInfo, ssh_online: cleanOnlineStr || "0" }));
     }
 
     if (pathName === '/' || pathName === '/index.html') {
@@ -479,9 +497,6 @@ const server = http.createServer(async (req, res) => {
                 .input-group { display: flex; gap: 8px; margin-bottom: 10px; }
                 .input-ssh { background: #030712; border: 1px solid #4b5563; padding: 8px 12px; border-radius: 6px; color: #fff; font-size: 13px; width: 100%; }
                 
-                /* KOTAK TEXTAREA TRANSPARAN TOKEN TEKS TERANG */
-                .textarea-zt { background: #030712; border: 1px solid #a855f7; padding: 10px; border-radius: 8px; color: #a855f7; font-size: 12px; width: 100%; font-family: monospace; resize: vertical; min-height: 70px; word-break: break-all; outline: none; }
-                
                 .select-zt { background: #030712; border: 1px solid #a855f7; padding: 8px 12px; border-radius: 6px; color: #38bdf8; font-size: 13px; width: 100%; font-weight: bold; font-family: monospace; outline: none; margin: 6px 0; }
                 .btn-add { background: #38bdf8; color: #090d16; border: none; padding: 8px 15px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 13px; }
                 .admin-status-lbl { font-size: 10px; font-weight: bold; color: #38bdf8; background: rgba(56, 189, 248, 0.1); padding: 2px 6px; border-radius: 4px; }
@@ -508,7 +523,8 @@ const server = http.createServer(async (req, res) => {
                 .lbl-vpn { font-size: 10px; color: #38bdf8; font-weight: bold; display: block; margin-bottom: 4px; text-transform: uppercase; }
                 .border-lbl { border-left: 2px solid #38bdf8; padding-left: 6px; font-size: 11px; font-weight: bold; margin-top: 12px; font-family: monospace; }
 
-                .zt-admin-card { background: #1a102f; border: 1px solid #a855f7; padding: 15px; border-radius: 12px; margin-bottom: 15px; display: none; }
+                .zt-admin-card { background: #1a102f; border: 1px solid #a855f7; padding: 15px; border-radius: 12px; margin-bottom: 15px; }
+                .btn-token-trigger { width: 100%; padding: 10px; border-radius: 8px; font-weight: bold; font-size: 12px; cursor: pointer; border: none; transition: 0.2s; }
             </style>
         </head>
         <body>
@@ -527,16 +543,15 @@ const server = http.createServer(async (req, res) => {
                     <div class="stat-card" style="border-color: #a855f7;"><div class="stat-title" style="color:#d8b4fe;">SSH Online Users</div><div class="stat-value" id="ssh" style="font-size:14px; color:#a855f7; line-height:1.3;">👥 0 Users</div></div>
                 </div>
 
-                <!-- 🔒 MENU KONTROL TOKEN KOTAK TERANG (KHUSUS ADMIN) -->
+                <!-- 🔒 MENU 1 TOKEN UNTUK SEMUA PORT (MULTI-HOSTNAME) -->
                 <div class="zt-admin-card" id="zt-admin-box">
-                    <div style="font-size: 12px; font-weight: bold; color: #d8b4fe; margin-bottom: 8px; display: flex; justify-content: space-between;">
-                        <span>⚙️ PENGATURAN TOKEN ZERO TRUST</span>
-                        <span onclick="changeAdminPassUI()" style="color: #eab308; cursor: pointer; text-decoration: underline;">🔑 GANTI PASS ADMIN</span>
+                    <div style="font-size: 12px; font-weight: bold; color: #d8b4fe; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
+                        <span>⚙️ SINGLE TOKEN MULTI-SERVICE TUNNEL</span>
+                        <span id="btn-change-pass" onclick="changeAdminPassUI()" style="color: #eab308; cursor: pointer; text-decoration: underline; font-size: 11px; display: none;">🔑 GANTI PASS ADMIN</span>
                     </div>
-                    <textarea id="zt-token-input" class="textarea-zt" placeholder="Paste Token Cloudflare eyJ... di sini (Teks Terlihat Clear)..."></textarea>
-                    <div style="display: flex; gap: 8px; margin-top: 8px;">
-                        <button class="btn-add" style="background: #a855f7; color: #fff; width: 100%;" onclick="saveZtToken()">💾 SIMPAN & KONEK</button>
-                        <button class="btn-add" style="background: #ef4444; color: #fff; width: 40%;" onclick="deleteZtToken()">🗑️ HAPUS</button>
+
+                    <div style="display: flex; flex-direction: column; gap: 8px;">
+                        <button class="btn-token-trigger" style="background: #a855f7; color: #fff;" onclick="promptSingleTokenInput()">🌐 MASUKKAN TOKEN CLOUDFLARE (SEMUA PORT)</button>
                     </div>
                 </div>
 
@@ -557,12 +572,22 @@ const server = http.createServer(async (req, res) => {
                     </table>
                 </div>
 
+                <!-- DOMAIN TUNNEL SSH (DARI INGRESS RULE PORT 8880) -->
                 <div class="url-section" style="border-color: #a855f7;">
                     <div class="url-title" style="color: #d8b4fe;">Server ssh aktif (zero trust domain)</div>
                     <div id="zt-container">
                         <div class="url-box" id="named-url">Menghubungkan Domain...</div>
                     </div>
                     <button class="btn-copy" id="btn-copy-named" style="background:#a855f7; color:#fff;" onclick="copyTxt('named-url', 'btn-copy-named')">📋 COPY SSH SERVER</button>
+                </div>
+
+                <!-- DOMAIN TUNNEL VMESS (DARI INGRESS RULE PORT 8001) -->
+                <div class="url-section" style="border-color: #0284c7;">
+                    <div class="url-title" style="color: #38bdf8;">Server Zero trust (Vmess/Vless/X-Ray Domain)</div>
+                    <div id="zt-vmess-container">
+                        <div class="url-box" id="vmess-named-url" style="color:#38bdf8;">Menghubungkan Domain VMess...</div>
+                    </div>
+                    <button class="btn-copy" id="btn-copy-vmess-named" style="background:#0284c7; color:#fff;" onclick="copyTxt('vmess-named-url', 'btn-copy-vmess-named')">📋 COPY VMESS DOMAIN</button>
                 </div>
 
                 <div class="url-section" style="border-color: #f43f5e;"><div class="url-title" style="color: #fb7185;">Server SNI/Stunnel SNI MURNI</div><div class="url-box" id="railway-url" style="color: #f43f5e;">Loading...</div><button class="btn-copy" id="btn-copy-railway" style="background:#f43f5e; color:#fff;" onclick="copyTxt('railway-url', 'btn-copy-railway')">📋 COPY SERVER SSH SNI</button></div>
@@ -578,8 +603,10 @@ const server = http.createServer(async (req, res) => {
                       <input id="uuidInput" type="text" value="Loading..." class="input-ssh" style="font-family: monospace;" readonly>
                     </div>
                     <div>
-                      <label class="lbl-vpn">HOST TUNNEL ARGO</label>
-                      <input id="hostInput" type="text" value="Loading..." class="input-ssh" style="font-family: monospace;" readonly>
+                      <label class="lbl-vpn">PILIH DOMAIN TARGET TUNNEL</label>
+                      <select id="domainSelect" class="input-ssh" style="font-family: monospace; color: #38bdf8; font-weight: bold;">
+                        <option value="">-- Menunggu Domain --</option>
+                      </select>
                     </div>
                   </div>
                   <div style="margin-bottom: 12px;">
@@ -617,7 +644,7 @@ const server = http.createServer(async (req, res) => {
                   </div>
                 </div>
 
-                <p class="note">Dual terowongan berjalan sinkron terpisah.<br>Node.js Core Engine Rendering System.</p>
+                <p class="note">Single terowongan multi-host berjalan sinkron.<br>Node.js Core Engine Rendering System.</p>
             </div>
             <script>
                 let adminToken = localStorage.getItem("admin_session_token") || "";
@@ -627,20 +654,21 @@ const server = http.createServer(async (req, res) => {
                 function checkAdminUI() {
                     let indicator = document.getElementById('admin-indicator'); 
                     let loginBtn = document.getElementById('admin-login-btn');
-                    let ztAdminBox = document.getElementById('zt-admin-box');
+                    let changePassBtn = document.getElementById('btn-change-pass');
 
                     if(!isPassConfigured) {
                         loginBtn.innerText = "⚙️ SETUP ADMIN PASS";
                         loginBtn.style.background = "#eab308"; loginBtn.style.color = "#000";
+                        changePassBtn.style.display = "none";
                     } else if(adminToken) {
                         indicator.innerText = "ADMIN ROUTE"; indicator.style.color = "#4ade80"; indicator.style.background = "rgba(74, 222, 128, 0.1)"; 
                         loginBtn.innerText = "🔒 LOGOUT"; loginBtn.style.background = "#334155"; loginBtn.style.color = "#f8fafc";
-                        ztAdminBox.style.display = "block";
+                        changePassBtn.style.display = "inline";
                         document.querySelectorAll('.btn-del').forEach(b => b.style.display = "inline-block"); document.querySelectorAll('.btn-info').forEach(b => b.style.display = "inline-block");
                     } else {
                         indicator.innerText = "PUBLIC CREATION"; indicator.style.color = "#38bdf8"; indicator.style.background = "rgba(56, 189, 248, 0.1)"; 
                         loginBtn.innerText = "🔑 LOGIN ADMIN"; loginBtn.style.background = "#334155"; loginBtn.style.color = "#f8fafc";
-                        ztAdminBox.style.display = "none";
+                        changePassBtn.style.display = "none";
                         document.querySelectorAll('.btn-del').forEach(b => b.style.display = "none"); document.querySelectorAll('.btn-info').forEach(b => b.style.display = "none");
                     }
                 }
@@ -648,23 +676,64 @@ const server = http.createServer(async (req, res) => {
                 async function handleAdminAuthBtn() {
                     if(!isPassConfigured) {
                         let newP = prompt("KREASI PASSWORD ADMIN PERTAMA KALI:\\nMasukkan Password Admin Baru:");
-                        if(!newP) return;
+                        if(!newP) return false;
                         try {
                             let res = await fetch('/api/setup-pass?pass=' + encodeURIComponent(newP));
                             let data = await res.json();
                             alert(data.message);
-                            if(data.status === "success") { adminToken = newP; localStorage.setItem("admin_session_token", adminToken); updateStats(); }
+                            if(data.status === "success") { 
+                                adminToken = newP; 
+                                localStorage.setItem("admin_session_token", adminToken); 
+                                updateStats(); 
+                                return true;
+                            }
                         } catch(e) { alert("Gagal membuat password!"); }
-                        return;
+                        return false;
                     }
 
-                    if(adminToken) { localStorage.removeItem("admin_session_token"); adminToken = ""; checkAdminUI(); fetchAccounts(); return; }
+                    if(adminToken) { 
+                        localStorage.removeItem("admin_session_token"); 
+                        adminToken = ""; 
+                        checkAdminUI(); 
+                        fetchAccounts(); 
+                        return false; 
+                    }
                     
-                    let pass = prompt("Masukkan Password Admin:"); if(!pass) return;
+                    let pass = prompt("Masukkan Password Admin:"); if(!pass) return false;
                     try {
                         let res = await fetch('/api/login?pass='+pass); let data = await res.json();
-                        if(data.status === "success") { adminToken = data.token; localStorage.setItem("admin_session_token", adminToken); checkAdminUI(); fetchAccounts(); } else { alert(data.message); }
+                        if(data.status === "success") { 
+                            adminToken = data.token; 
+                            localStorage.setItem("admin_session_token", adminToken); 
+                            checkAdminUI(); 
+                            fetchAccounts(); 
+                            return true;
+                        } else { 
+                            alert(data.message); 
+                        }
                     } catch(e) { alert("Gagal terhubung"); }
+                    return false;
+                }
+
+                async function promptSingleTokenInput() {
+                    if (!adminToken) {
+                        alert("Akses Ditolak! Anda harus Login Admin terlebih dahulu.");
+                        let loggedIn = await handleAdminAuthBtn();
+                        if (!loggedIn && !adminToken) return;
+                    }
+
+                    let inputToken = prompt("MASUKKAN TOKEN CLOUDFLARE ARGO (SINGLE TOKEN UNTUK SEMUA INGRESS RULES):\\n\\n(Kosongkan lalu klik OK jika ingin menghapus token tersimpan)");
+                    
+                    if (inputToken === null) return;
+
+                    try {
+                        let res = await fetch('/api/set-token?pass=' + encodeURIComponent(adminToken) + '&token=' + encodeURIComponent(inputToken.trim()));
+                        let data = await res.json();
+                        alert(data.message);
+                        updateStats();
+                    } catch(e) {
+                        alert("Gagal memperbarui token!");
+                    }
                 }
 
                 async function changeAdminPassUI() {
@@ -679,31 +748,6 @@ const server = http.createServer(async (req, res) => {
                     } catch(e) { alert("Gagal mengupdate password!"); }
                 }
 
-                async function saveZtToken() {
-                    if (!adminToken) { alert("Login Admin Dulu!"); return; }
-                    let tkn = document.getElementById('zt-token-input').value.trim();
-                    if (!tkn) { alert("Token Kosong!"); return; }
-                    if (confirm("Simpan token & hubungkan Zero Trust?")) {
-                        try {
-                            let res = await fetch('/api/set-token?pass=' + encodeURIComponent(adminToken) + '&token=' + encodeURIComponent(tkn));
-                            let data = await res.json();
-                            alert(data.message);
-                            document.getElementById('zt-token-input').value = "";
-                        } catch(e) { alert("Gagal memperbarui token."); }
-                    }
-                }
-
-                async function deleteZtToken() {
-                    if (!adminToken) { alert("Login Admin Dulu!"); return; }
-                    if (confirm("Hapus token Zero Trust & matikan tunnel?")) {
-                        try {
-                            let res = await fetch('/api/set-token?pass=' + encodeURIComponent(adminToken) + '&token=');
-                            let data = await res.json();
-                            alert(data.message);
-                        } catch(e) { alert("Gagal menghapus token."); }
-                    }
-                }
-                
                 async function updateStats() {
                     try {
                         let res = await fetch('/api/stats'); let data = await res.json();
@@ -714,22 +758,63 @@ const server = http.createServer(async (req, res) => {
                         let detailActiveList = data.user_list_details || "Semua user offline";
                         document.getElementById('ssh').innerHTML = "👥 " + data.ssh_online + " Active<br><span style='font-size:11px; font-weight:normal; color:#d8b4fe; display:block; margin-top:5px; white-space:pre-line;'>" + detailActiveList + "</span>";
                         
+                        // Handler Domain SSH (Port 8880/8881)
                         let ztContainer = document.getElementById('zt-container');
                         if (data.zt_domains && data.zt_domains.length > 1) {
                             let dropdownHtml = '<select id="named-url" class="select-zt" onmousedown="event.stopPropagation()">';
-                            data.zt_domains.forEach(item => {
-                                dropdownHtml += '<option value="' + item.domain + '">🌐 ' + item.domain + ' (Port ' + item.port + ')</option>';
-                            });
+                            data.zt_domains.forEach(item => { dropdownHtml += '<option value="' + item.domain + '">🌐 ' + item.domain + ' (Port ' + item.port + ')</option>'; });
                             dropdownHtml += '</select>';
                             ztContainer.innerHTML = dropdownHtml;
                         } else if (data.zt_domains && data.zt_domains.length === 1) {
                             ztContainer.innerHTML = '<div class="url-box" id="named-url">' + data.zt_domains[0].domain + '</div>';
                         } else {
-                            ztContainer.innerHTML = '<div class="url-box" id="named-url">Menghubungkan Domain...</div>';
+                            ztContainer.innerHTML = '<div class="url-box" id="named-url">Menghubungkan Domain SSH...</div>';
+                        }
+
+                        // Handler Domain VMess (Port 8001)
+                        let ztVmessContainer = document.getElementById('zt-vmess-container');
+                        if (data.zt_vmess_domains && data.zt_vmess_domains.length > 1) {
+                            let dropdownVmessHtml = '<select id="vmess-named-url" class="select-zt" style="border-color:#0284c7; color:#38bdf8;" onmousedown="event.stopPropagation()">';
+                            data.zt_vmess_domains.forEach(item => { dropdownVmessHtml += '<option value="' + item.domain + '">⚡ ' + item.domain + ' (Port ' + item.port + ')</option>'; });
+                            dropdownVmessHtml += '</select>';
+                            ztVmessContainer.innerHTML = dropdownVmessHtml;
+                        } else if (data.zt_vmess_domains && data.zt_vmess_domains.length === 1) {
+                            ztVmessContainer.innerHTML = '<div class="url-box" id="vmess-named-url" style="color:#38bdf8;">' + data.zt_vmess_domains[0].domain + '</div>';
+                        } else {
+                            ztVmessContainer.innerHTML = '<div class="url-box" id="vmess-named-url" style="color:#38bdf8;">Menghubungkan Domain VMess...</div>';
                         }
 
                         document.getElementById('railway-url').innerText = data.railway_url; 
                         document.getElementById('quick-url').innerText = data.quick_url;
+
+                        // UPDATE OPTION DROPDOWN DOMAIN UNTUK CONFIG GENERATOR
+                        let domainSelect = document.getElementById('domainSelect');
+                        let currentSelected = domainSelect.value;
+                        let optionsHtml = '';
+
+                        if (data.quick_url && !data.quick_url.includes("Menunggu")) {
+                            optionsHtml += '<option value="' + data.quick_url + '">⚡ Quick Tunnel: ' + data.quick_url + '</option>';
+                        }
+
+                        if (data.zt_vmess_domains && data.zt_vmess_domains.length > 0) {
+                            data.zt_vmess_domains.forEach(d => {
+                                optionsHtml += '<option value="' + d.domain + '">🛡️ Zero Argo VMess: ' + d.domain + '</option>';
+                            });
+                        }
+
+                        if (data.zt_domains && data.zt_domains.length > 0) {
+                            data.zt_domains.forEach(d => {
+                                optionsHtml += '<option value="' + d.domain + '">🔑 Zero Argo SSH: ' + d.domain + '</option>';
+                            });
+                        }
+
+                        if (!optionsHtml) {
+                            optionsHtml = '<option value="">-- Menunggu Domain Tunnel --</option>';
+                        }
+
+                        domainSelect.innerHTML = optionsHtml;
+                        if (currentSelected) domainSelect.value = currentSelected;
+
                     } catch(e) {}
                 }
 
@@ -772,7 +857,7 @@ const server = http.createServer(async (req, res) => {
                     
                     if(!urlText.includes("Menunggu") && !urlText.includes("Tidak Aktif")) {
                         navigator.clipboard.writeText(urlText); let btn = document.getElementById(btnId); let oldText = btn.innerText; btn.innerText = "✅ COPIED!"; btn.style.background = "#4ade80"; btn.style.color = "#090d16";
-                        setTimeout(() => { btn.innerText = oldText; if (elementId === 'named-url') { btn.style.background = '#a855f7'; btn.style.color = '#fff'; } else if (elementId === 'railway-url') { btn.style.background = '#f43f5e'; btn.style.color = '#fff'; } else { btn.style.background = '#38bdf8'; btn.style.color = '#090d16'; } }, 1500);
+                        setTimeout(() => { btn.innerText = oldText; if (elementId === 'named-url') { btn.style.background = '#a855f7'; btn.style.color = '#fff'; } else if (elementId === 'vmess-named-url') { btn.style.background = '#0284c7'; btn.style.color = '#fff'; } else if (elementId === 'railway-url') { btn.style.background = '#f43f5e'; btn.style.color = '#fff'; } else { btn.style.background = '#38bdf8'; btn.style.color = '#090d16'; } }, 1500);
                     }
                 }
 
@@ -782,7 +867,6 @@ const server = http.createServer(async (req, res) => {
                     if (!response.ok) return;
                     const data = await response.json();
                     if (data.uuid) document.getElementById('uuidInput').value = data.uuid;
-                    if (data.domain) document.getElementById('hostInput').value = data.domain;
                     window.serverActivePaths = data.paths;
                   } catch (e) {}
                 }
@@ -792,11 +876,17 @@ const server = http.createServer(async (req, res) => {
                   if(evt && evt.target) evt.target.classList.add('btn-active');
                   
                   const uuid = document.getElementById('uuidInput').value.trim();
-                  const host = document.getElementById('hostInput').value.trim(); 
+                  const hostSelect = document.getElementById('domainSelect');
+                  const host = hostSelect.value.trim(); 
                   const bugHost = document.getElementById('bugInput').value.trim(); 
                   const area = document.getElementById('output-area');
                   const label = document.getElementById('out-type');
                   const txt = document.getElementById('configText');
+
+                  if (!host || host.includes("Menunggu")) {
+                    alert("Domain Tunnel belum siap / belum dipilih!");
+                    return;
+                  }
 
                   const pathsMapping = window.serverActivePaths || { vless: '/vless-argo', vmess: '/vmess-argo', trojan: '/trojan-argo' };
                   let basePath = pathsMapping[protocol] || '/' + protocol + '-argo';
@@ -828,7 +918,7 @@ const server = http.createServer(async (req, res) => {
                       let jsonVmess = { v: "2", ps: remark, add: host, port: 443, id: uuid, aid: 0, scy: "auto", net: "ws", type: "none", host: bugHost, path: basePath, tls: "tls", sni: bugHost };
                       configResult = 'vmess://' + safeBtoa(JSON.stringify(jsonVmess));
                     } else if (protocol === 'trojan') {
-                      configResult = 'trojan://' + uuid + '@' + host + ':443?security=tls&sni=' + bugHost + '&type=ws&host=' + bugHost + '&path=' + encodeURIComponent(basePath) + '#' + encodeURIComponent(remark);
+                      configResult = 'trojan://' + uuid + '@' + host + ':443?security=tls&sni=' + host + '&type=ws&host=' + host + '&path=' + encodeURIComponent(basePath) + '#' + encodeURIComponent(remark);
                     }
                   } 
                   else if (type === 'cdn') {
@@ -888,10 +978,10 @@ server.listen(PORT, () => {
     console.log(`[UI & Xray Gateway Engine] Running seamlessly on port ${PORT}`);
     generateConfig().then(() => downloadFilesAndRun()).then(() => extractDomains()).catch(e => console.error(e));
     
-    if (fs.existsSync(ZT_TOKEN_FILE)) {
+    if (fs.existsSync(ZT_SINGLE_TOKEN_FILE)) {
         try {
-            const savedToken = fs.readFileSync(ZT_TOKEN_FILE, 'utf8').trim();
-            if (savedToken) restartZeroTrustTunnel(savedToken);
+            const savedToken = fs.readFileSync(ZT_SINGLE_TOKEN_FILE, 'utf8').trim();
+            if (savedToken) restartSingleTunnel(savedToken);
         } catch(e) {}
     }
 
