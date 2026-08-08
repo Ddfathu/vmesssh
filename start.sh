@@ -44,26 +44,31 @@ sysctl -w net.core.rmem_max=16777216 2>/dev/null
 sysctl -w net.core.wmem_max=16777216 2>/dev/null
 sysctl -w net.core.netdev_max_backlog=50000 2>/dev/null
 sysctl -w net.ipv4.tcp_max_syn_backlog=8192 2>/dev/null
-# =================================================================
 
+# =================================================================
+# 🎨 PEMBUATAN BANNER DROPBEAR
+# =================================================================
 echo "[*] Membuat Banner Dropbear..."
 if [ -n "$CUSTOM_BANNER" ]; then
-    echo "$CUSTOM_BANNER" > /etc/dropbear_banner
+    echo -e "$CUSTOM_BANNER" > /etc/dropbear_banner
 else
     cat << 'EOF' > /etc/dropbear_banner
-<center><font color="#FF0000">==================================================</font></center><br>
-<center><font color="#00FF00">👑 SELAMAT MENIKMATI 👑</font></center><br>
-<center><font color="#00FFFF">🥳 SSH SERVER PAAS RAILWAY 🥳</font></center><br>
-<br>
-<font color="#FFA500"> 🔹 MULTIPLEXER :</font> <font color="#FFFF00">NODE.JS JAVASCRIPT ENGINE</font><br>
-<font color="#00FF00"> 🔹 OS PLATFORM :</font> <font color="#00FFFF">UBUNTU</font><br>
-<font color="#0000FF"> 🔹 SSH SERVICE :</font> <font color="#9B59B6">DROPBEAR ENHANCED BUFFER</font><br>
-<center><font color="#FF0000">==================================================</font></center><br>
-<center><font color="#FFD700">powered by : d e d e f a t h u</font></center><br>
-<center><font color="#FF0000">==================================================</font></center>
+==================================================
+          👑 SELAMAT MENIKMATI 👑
+       🥳 SSH SERVER PAAS RAILWAY 🥳
+==================================================
+ 🔹 MULTIPLEXER : NODE.JS JAVASCRIPT ENGINE
+ 🔹 OS PLATFORM : UBUNTU
+ 🔹 SSH SERVICE : DROPBEAR ENHANCED BUFFER
+==================================================
+ powered by : d e d e f a t h u
+==================================================
 EOF
 fi
 
+# =================================================================
+# 🔒 KOFIGURASI NETWORK & SERVICES (DROPBEAR, STUNNEL, UDPGW)
+# =================================================================
 SSL_INTERNAL_PORT="2443"
 
 echo "[*] Membuat Sertifikat SSL Stunnel..."
@@ -72,6 +77,9 @@ openssl req -new -newkey rsa:2048 -days 365 -nodes -x509 \
     -subj "/C=ID/ST=Jakarta/L=Jakarta/O=RailwaySSH/CN=localhost" \
     -keyout /etc/stunnel/stunnel.pem -out /etc/stunnel/stunnel.pem 2>/dev/null
 chmod 600 /etc/stunnel/stunnel.pem
+
+echo "[*] Memastikan proses Dropbear lama bersih..."
+pkill -9 dropbear 2>/dev/null
 
 echo "[*] Memulai Dropbear Server di Port Lokal 22..."
 /usr/sbin/dropbear -p 127.0.0.1:22 -b /etc/dropbear_banner -W 1048576 -K 15 -I 300
