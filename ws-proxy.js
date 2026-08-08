@@ -1,10 +1,25 @@
 const net = require('net');
 const crypto = require('crypto');
+const fs = require('fs');
 
 const WS_PORT = process.env.WS_PORT || '8880';
 const SSH_TARGET_HOST = '127.0.0.1';
-const SSH_TARGET_PORT = 22;
 const WSMagic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const PROXY_CONFIG_FILE = "/tmp/ws_proxy_config.json";
+
+// 🔍 FUNGSI BACA CONFIG DINAMIS DARI BACKEND UI
+function getProxyConfig() {
+    try {
+        if (fs.existsSync(PROXY_CONFIG_FILE)) {
+            return JSON.parse(fs.readFileSync(PROXY_CONFIG_FILE, 'utf8'));
+        }
+    } catch (e) {}
+    return {
+        sshPort: parseInt(process.env.SSH_TARGET_PORT || '22'),
+        keepAlive: 15000,
+        maxBuffer: 32 * 1024
+    };
+}
 
 function parseHeaders(rawText) {
     const headers = {};
@@ -22,8 +37,14 @@ function parseHeaders(rawText) {
 }
 
 const server = net.createServer((clientConn) => {
+    // Ambil settingan terbaru tiap ada client konek
+    const cfg = getProxyConfig();
+    const targetSshPort = cfg.sshPort || 22;
+    const keepAliveMs = cfg.keepAlive || 15000;
+    const maxBufferLimit = cfg.maxBuffer || (32 * 1024);
+
     clientConn.setNoDelay(true);
-    clientConn.setKeepAlive(true, 15000); // ⚡ Anti silent disconnect
+    clientConn.setKeepAlive(true, keepAliveMs); // ⚡ Ping KeepAlive Dinamis
     clientConn.readableHighWaterMark = 64 * 1024;
     clientConn.writableHighWaterMark = 64 * 1024;
 
@@ -76,16 +97,15 @@ const server = net.createServer((clientConn) => {
         }
 
         // =========================================================
-        // KONEKSI DAN PENYARINGAN STRICT KE DROPBEAR
+        // KONEKSI DINAMIS KE DROPBEAR / OPENSSH
         // =========================================================
-        const sshConn = net.createConnection({ port: SSH_TARGET_PORT, host: SSH_TARGET_HOST }, () => {
+        const sshConn = net.createConnection({ port: targetSshPort, host: SSH_TARGET_HOST }, () => {
             sshConn.setNoDelay(true);
-            sshConn.setKeepAlive(true, 15000); // ⚡ KeepAlive ke Dropbear
+            sshConn.setKeepAlive(true, keepAliveMs);
 
             let sshHandshakeDone = false;
             let pendingBuffer = Buffer.alloc(0);
 
-            // Alirkan data dari HP (Client) ke Dropbear
             clientConn.on('data', (chunk) => {
                 if (sshHandshakeDone) {
                     if (sshConn.writable) {
@@ -96,7 +116,6 @@ const server = net.createServer((clientConn) => {
                 }
 
                 pendingBuffer = Buffer.concat([pendingBuffer, chunk]);
-
                 const sshIndex = pendingBuffer.indexOf(Buffer.from('SSH-'));
 
                 if (sshIndex !== -1) {
@@ -109,15 +128,14 @@ const server = net.createServer((clientConn) => {
                     }
                     pendingBuffer = null; 
                 } else {
-                    // ⚡ Trik Tambahan: Jika ada paket sampah HTTP ekstra di pertengahan stream tanpa 'SSH-'
-                    if (pendingBuffer.length > 32 * 1024) {
+                    // Batas penyaringan buffer dinamis
+                    if (pendingBuffer.length > maxBufferLimit) {
                         clientConn.destroy();
                         sshConn.destroy();
                     }
                 }
             });
 
-            // Alirkan balik data dari Dropbear ke HP (Client)
             sshConn.on('data', (data) => {
                 if (clientConn.writable) {
                     const flush = clientConn.write(data);
@@ -137,5 +155,5 @@ const server = net.createServer((clientConn) => {
 });
 
 server.listen(WS_PORT, '0.0.0.0', () => {
-    console.log(`[WS Engine JS] Enhanced Buffer Cleaner Active on Port ${WS_PORT}`);
+    console.log(`[WS Engine JS] Dynamic Proxy Active on Port ${WS_PORT}`);
 });
