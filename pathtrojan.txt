@@ -1,1 +1,3 @@
-/trojan
+/trojan-argo
+/tojan
+/cdn-terace
