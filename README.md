@@ -9,9 +9,6 @@ pastikan kamu sudah punya akun github dan terlogin. klik logo pork di atas yg ga
 
 1. **TOKEN** masukan nama variabel TOKEN dan value nya adalah token agro zerotrust
 
-# UNTUK KONFIG SSH
-* **USER DEFAULT:** dd
-* **PASWORD DEFAULT:** dd
 * # PENTING PENGATURAN PORT
 * domain railway arahkan ke port 8081 untuk d jadikan ui
 * tcp proxy railway arahkan ke port 8881
