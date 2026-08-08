@@ -4,14 +4,38 @@
 ulimit -n 65535 2>/dev/null
 ulimit -s unlimited 2>/dev/null
 
+SYS_CFG="/tmp/system_config.json"
+
 # =================================================================
-# 🚀 ULTRA TURBO KERNEL TWEAKS 🚀
+# 🔍 BACA KONFIGURASI DINAMIS DARI FILE JSON UI
+# =================================================================
+if [ -f "$SYS_CFG" ] && command -v jq >/dev/null 2>&1; then
+    CUSTOM_BANNER=$(jq -r '.banner // empty' "$SYS_CFG")
+    ENABLE_BBR=$(jq -r '.enable_bbr // "true"' "$SYS_CFG")
+    UDPGW_PORT=$(jq -r '.udpgw_port // "7300"' "$SYS_CFG")
+    UDPGW_MAX_CLIENTS=$(jq -r '.udpgw_max_clients // "1000"' "$SYS_CFG")
+else
+    CUSTOM_BANNER=""
+    ENABLE_BBR="true"
+    UDPGW_PORT="7300"
+    UDPGW_MAX_CLIENTS="1000"
+fi
+
+# =================================================================
+# 🚀 ULTRA TURBO KERNEL TWEAKS & BBR SWITCH
 # =================================================================
 echo "[*] Mengoptimalkan antrean socket & pembersihan TIME_WAIT..."
 sysctl -w net.ipv4.tcp_tw_reuse=1 2>/dev/null
 sysctl -w net.ipv4.tcp_fin_timeout=10 2>/dev/null
 sysctl -w net.core.default_qdisc=fq 2>/dev/null
-sysctl -w net.ipv4.tcp_congestion_control=bbr 2>/dev/null
+
+if [ "$ENABLE_BBR" = "true" ]; then
+    echo "[*] Mengaktifkan TCP BBR Congestion Control..."
+    sysctl -w net.ipv4.tcp_congestion_control=bbr 2>/dev/null
+else
+    echo "[*] BBR Di-nonaktifkan, menggunakan TCP Cubic bawaan..."
+    sysctl -w net.ipv4.tcp_congestion_control=cubic 2>/dev/null
+fi
 
 echo "[*] Mengatur ukuran buffer raksasa agar tidak tersedak dobel request..."
 sysctl -w net.ipv4.tcp_rmem="4096 8388608 16777216" 2>/dev/null
@@ -23,7 +47,10 @@ sysctl -w net.ipv4.tcp_max_syn_backlog=8192 2>/dev/null
 # =================================================================
 
 echo "[*] Membuat Banner Dropbear..."
-cat << 'EOF' > /etc/dropbear_banner
+if [ -n "$CUSTOM_BANNER" ]; then
+    echo "$CUSTOM_BANNER" > /etc/dropbear_banner
+else
+    cat << 'EOF' > /etc/dropbear_banner
 <center><font color="#FF0000">==================================================</font></center><br>
 <center><font color="#00FF00">👑 SELAMAT MENIKMATI 👑</font></center><br>
 <center><font color="#00FFFF">🥳 SSH SERVER PAAS RAILWAY 🥳</font></center><br>
@@ -35,6 +62,7 @@ cat << 'EOF' > /etc/dropbear_banner
 <center><font color="#FFD700">powered by : d e d e f a t h u</font></center><br>
 <center><font color="#FF0000">==================================================</font></center>
 EOF
+fi
 
 SSL_INTERNAL_PORT="2443"
 
@@ -42,7 +70,7 @@ echo "[*] Membuat Sertifikat SSL Stunnel..."
 mkdir -p /etc/stunnel /var/run/stunnel4
 openssl req -new -newkey rsa:2048 -days 365 -nodes -x509 \
     -subj "/C=ID/ST=Jakarta/L=Jakarta/O=RailwaySSH/CN=localhost" \
-    -keyout /etc/stunnel/stunnel.pem -out /etc/stunnel/stunnel.pem
+    -keyout /etc/stunnel/stunnel.pem -out /etc/stunnel/stunnel.pem 2>/dev/null
 chmod 600 /etc/stunnel/stunnel.pem
 
 echo "[*] Memulai Dropbear Server di Port Lokal 22..."
@@ -69,8 +97,8 @@ export WS_PORT="8880"
 node ws-proxy.js &
 
 if [ -f /usr/local/bin/badvpn-udpgw ]; then
-    echo "[*] Memulai BadVPN udpgw di Port Global 7300..."
-    /usr/local/bin/badvpn-udpgw --listen-addr 0.0.0.0:7300 --max-clients 1000 --max-connections-for-client 50 &
+    echo "[*] Memulai BadVPN udpgw di Port Global ${UDPGW_PORT}..."
+    /usr/local/bin/badvpn-udpgw --listen-addr 0.0.0.0:${UDPGW_PORT} --max-clients ${UDPGW_MAX_CLIENTS} --max-connections-for-client 50 &
 fi
 
 TARGET_ZT_PORT="${ARGO_PORT:-8880}"
